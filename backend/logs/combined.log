@@ -14,3 +14,12 @@
 2026-03-24 22:10:10 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
 2026-03-24 22:12:02 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
 2026-03-24 22:12:04 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-03-24 22:41:12 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-03-24 22:41:15 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-00.4vethwx.mongodb.net
+2026-03-24 23:29:55 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-03-24 23:30:18 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-03-24 23:34:26 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-03-24 23:34:29 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-03-24 23:35:29 [INFO]: Email sent: <775fbf66-6690-2808-c500-81505fb00916@gmail.com> to rathorvijay856@gmail.com
+2026-03-24 23:39:07 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-03-24 23:39:10 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
