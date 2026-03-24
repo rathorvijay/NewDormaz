@@ -1,11 +1,11 @@
 {
   "name": "dormez-backend",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "description": "Dormez Mattress Industry Backend API",
-  "main": "server.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
