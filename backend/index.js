@@ -38,7 +38,7 @@ app.use('/api/', limiter);
 
 // CORS
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'https://newdormaz.onrender.com/',
+  origin: process.env.FRONTEND_URL || 'https://dormaz-frontend.vercel.app',
   credentials: true,
 }));
 
