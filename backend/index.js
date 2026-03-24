@@ -65,7 +65,7 @@ app.use('/api/coupons', couponRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Health Check
-app.get('/api/health', (req, res) => {
+app.get('/', (req, res) => {
   res.json({ status: 'OK', message: 'Dormez API is running 🛏️' });
 });
 
