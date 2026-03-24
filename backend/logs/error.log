@@ -3,3 +3,6 @@
 2026-03-23 22:33:05 [ERROR]: Not Found - /favicon.ico - /favicon.ico - GET - ::1
 2026-03-24 23:29:55 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
 2026-03-24 23:30:18 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-03-24 23:44:19 [ERROR]: ENOENT: no such file or directory, open 'C:\Users\Abhishek Kangane\new 240226 vijay\NewDormaz\backend\uploads\dormez-1774376059142-30841600.png' - /api/products - POST - ::1
+2026-03-24 23:47:39 [ERROR]: Your account has been blocked. Contact support. - /api/auth/login - POST - ::1
+2026-03-25 00:07:33 [ERROR]: User already exists with this email - /api/auth/register - POST - ::1

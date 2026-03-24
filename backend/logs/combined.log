@@ -23,3 +23,10 @@
 2026-03-24 23:35:29 [INFO]: Email sent: <775fbf66-6690-2808-c500-81505fb00916@gmail.com> to rathorvijay856@gmail.com
 2026-03-24 23:39:07 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
 2026-03-24 23:39:10 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
+2026-03-24 23:44:19 [ERROR]: ENOENT: no such file or directory, open 'C:\Users\Abhishek Kangane\new 240226 vijay\NewDormaz\backend\uploads\dormez-1774376059142-30841600.png' - /api/products - POST - ::1
+2026-03-24 23:47:39 [ERROR]: Your account has been blocked. Contact support. - /api/auth/login - POST - ::1
+2026-03-24 23:59:07 [INFO]: Email sent: <4c3020a3-1900-db6b-2bde-f69b887ea88d@gmail.com> to rathorvijay781@gmail.com
+2026-03-25 00:07:27 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-03-25 00:07:30 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-00.4vethwx.mongodb.net
+2026-03-25 00:07:33 [ERROR]: User already exists with this email - /api/auth/register - POST - ::1
+2026-03-25 00:07:49 [INFO]: Email sent: <8a0b46fd-acf8-ea99-2d0e-6609930c4551@gmail.com> to rathorvijay@gmail.com
