@@ -45,7 +45,7 @@ const AppRoutes = () => {
         <Route path="/products" element={<Products />} />
         <Route path="/products/:id" element={<ProductDetails />} />
         <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
-<Route path="/reset-password" element={<ResetPassword />} />
+<Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="/register" element={!user ? <Register /> : <Navigate to="/" />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
 
