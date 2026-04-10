@@ -34,3 +34,49 @@
 2026-03-25 01:18:57 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
 2026-03-25 01:30:52 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
 2026-03-25 01:30:55 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
+2026-03-25 01:52:09 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-03-30 22:48:05 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-03-30 22:48:08 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-03-30 22:52:44 [INFO]: Email sent: <0217396f-2544-6dbe-4128-2efc761f4c36@gmail.com> to rathorvijay731@gmail.com
+2026-03-30 22:55:10 [ERROR]: ENOENT: no such file or directory, open 'C:\Users\Abhishek Kangane\new 240226 vijay\NewDormaz\backend\uploads\dormez-1774891510801-699547047.png' - /api/products - POST - ::1
+2026-04-10 21:56:13 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-10 21:56:15 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
+2026-04-10 21:58:45 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-10 21:58:47 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-04-10 22:04:26 [INFO]: Email sent: <a007fc6c-b92a-3321-134f-471b2bb7255b@gmail.com> to rathorvijay856@gmail.com
+2026-04-10 22:05:05 [INFO]: Email sent: <a75197d9-39c1-8223-5a40-b8cd51299fea@gmail.com> to rathorvijay856@gmail.com
+2026-04-10 22:05:32 [INFO]: Email sent: <aa642818-8005-a076-d25b-995539ff39a4@gmail.com> to rathorvijay856@gmail.com
+2026-04-10 22:09:37 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-10 22:09:40 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
+2026-04-10 22:10:24 [ERROR]: Access denied. Admin only. - /api/products/69ccbb504c83bdb023e93161 - PUT - ::1
+2026-04-10 22:12:20 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:12:20 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:12:23 [ERROR]: Access denied. Admin only. - /api/users? - GET - ::1
+2026-04-10 22:12:24 [ERROR]: Access denied. Admin only. - /api/users? - GET - ::1
+2026-04-10 22:12:28 [ERROR]: Access denied. Admin only. - /api/coupons - GET - ::1
+2026-04-10 22:12:28 [ERROR]: Access denied. Admin only. - /api/coupons - GET - ::1
+2026-04-10 22:12:30 [ERROR]: Access denied. Admin only. - /api/admin/analytics - GET - ::1
+2026-04-10 22:12:30 [ERROR]: Access denied. Admin only. - /api/admin/analytics - GET - ::1
+2026-04-10 22:12:37 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-10 22:12:37 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-10 22:12:39 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:12:39 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:12:53 [ERROR]: Access denied. Admin only. - /api/products/69ccbb504c83bdb023e93161 - PUT - ::1
+2026-04-10 22:13:58 [ERROR]: Access denied. Admin only. - /api/products - POST - ::1
+2026-04-10 22:14:29 [ERROR]: Not authorized, no token - /api/orders/my - GET - ::1
+2026-04-10 22:14:29 [ERROR]: Not authorized, no token - /api/orders/my - GET - ::1
+2026-04-10 22:21:21 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-10 22:21:27 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-04-10 22:24:09 [INFO]: Email sent: <7b383593-6b3c-14dc-e02f-7fa6126b8826@gmail.com> to rathorvijay731@gmail.com
+2026-04-10 22:24:12 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:24:12 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:24:26 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:24:26 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:25:00 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:25:01 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:25:06 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-10 22:25:06 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-10 22:25:10 [ERROR]: Access denied. Admin only. - /api/coupons - GET - ::1
+2026-04-10 22:25:10 [ERROR]: Access denied. Admin only. - /api/coupons - GET - ::1
+2026-04-10 22:25:11 [ERROR]: Access denied. Admin only. - /api/admin/analytics - GET - ::1
+2026-04-10 22:25:11 [ERROR]: Access denied. Admin only. - /api/admin/analytics - GET - ::1

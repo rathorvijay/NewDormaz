@@ -1,8 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Box, Typography, Card, CardContent, TextField, Button, Grid,
-  Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel,
-  CircularProgress, Alert
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  TextField,
+  Button,
+  Grid,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Switch,
+  FormControlLabel,
+  CircularProgress,
+  Alert,
+  Divider,
 } from '@mui/material';
 import { ArrowBack, Save } from '@mui/icons-material';
 import { useDispatch, useSelector } from 'react-redux';
@@ -19,8 +32,20 @@ const EditProduct = () => {
   const [error, setError] = useState('');
 
   const [form, setForm] = useState({
-    name: '', category: '', size: '', thickness: '', price: '',
-    discount: 0, stock: '', description: '', features: '', tags: '', isFeatured: false,
+    name: '',
+    category: '',
+    size: '',
+    thickness: '',
+    price: '',
+    discount: 0,
+    stock: '',
+    description: '',
+    features: '',
+    tags: '',
+    isFeatured: false,
+    isReturnable: false,
+    returnWindowDays: 7,
+    policyNote: '',
   });
 
   useEffect(() => {
@@ -41,6 +66,9 @@ const EditProduct = () => {
         features: Array.isArray(product.features) ? product.features.join('\n') : '',
         tags: Array.isArray(product.tags) ? product.tags.join(', ') : '',
         isFeatured: product.isFeatured || false,
+        isReturnable: product.returnPolicy?.isReturnable || false,
+        returnWindowDays: product.returnPolicy?.returnWindowDays || 7,
+        policyNote: product.returnPolicy?.policyNote || '',
       });
     }
   }, [product]);
@@ -52,7 +80,8 @@ const EditProduct = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setSaving(true); setError('');
+    setSaving(true);
+    setError('');
     try {
       const formData = new FormData();
       Object.entries(form).forEach(([k, v]) => formData.append(k, v));
@@ -91,7 +120,7 @@ const EditProduct = () => {
                 <FormControl fullWidth required>
                   <InputLabel>Category</InputLabel>
                   <Select name="category" value={form.category} onChange={handleChange} label="Category">
-                    {['Luxury', 'Ortho', 'Premium', 'Memory', 'Spring'].map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                    {['Luxury', 'Ortho', 'Premium', 'Memory', 'Spring'].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
                   </Select>
                 </FormControl>
               </Grid>
@@ -99,7 +128,7 @@ const EditProduct = () => {
                 <FormControl fullWidth required>
                   <InputLabel>Size</InputLabel>
                   <Select name="size" value={form.size} onChange={handleChange} label="Size">
-                    {['Single', 'Double', 'Queen', 'King', 'Custom'].map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+                    {['Single', 'Double', 'Queen', 'King', 'Custom'].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
                   </Select>
                 </FormControl>
               </Grid>
@@ -125,18 +154,27 @@ const EditProduct = () => {
                 <TextField fullWidth label="Description" name="description" value={form.description} onChange={handleChange} multiline rows={4} required />
               </Grid>
               <Grid item xs={12}>
-                <FormControlLabel
-                  control={<Switch name="isFeatured" checked={form.isFeatured} onChange={handleChange} color="secondary" />}
-                  label="Featured Product"
-                />
+                <FormControlLabel control={<Switch name="isFeatured" checked={form.isFeatured} onChange={handleChange} color="secondary" />} label="Featured Product" />
               </Grid>
+              <Grid item xs={12}>
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="subtitle1" fontWeight={700} gutterBottom>Return Policy</Typography>
+                <FormControlLabel control={<Switch name="isReturnable" checked={form.isReturnable} onChange={handleChange} color="primary" />} label="Allow returns for this product" />
+              </Grid>
+              {form.isReturnable && (
+                <>
+                  <Grid item xs={6}>
+                    <TextField fullWidth label="Return window (days)" name="returnWindowDays" type="number" value={form.returnWindowDays} onChange={handleChange} inputProps={{ min: 1 }} required />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField fullWidth label="Policy note" name="policyNote" value={form.policyNote} onChange={handleChange} multiline rows={2} />
+                  </Grid>
+                </>
+              )}
             </Grid>
           </CardContent>
         </Card>
-        <Button
-          type="submit" variant="contained" size="large" startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <Save />}
-          disabled={saving} sx={{ mt: 2, px: 4 }}
-        >
+        <Button type="submit" variant="contained" size="large" startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <Save />} disabled={saving} sx={{ mt: 2, px: 4 }}>
           {saving ? 'Saving...' : 'Save Changes'}
         </Button>
       </form>

@@ -2,11 +2,9 @@ import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 
-// Layouts
 import UserLayout from '../layouts/UserLayout';
 import AdminLayout from '../layouts/AdminLayout';
 
-// User Pages
 import Home from '../pages/user/Home/Home';
 import Products from '../pages/user/Products/Products';
 import ProductDetails from '../pages/user/ProductDetails/ProductDetails';
@@ -31,7 +29,6 @@ import ManageUsers from '../pages/admin/Users/ManageUsers';
 import ManageCoupons from '../pages/admin/Coupons/ManageCoupons';
 import SalesAnalytics from '../pages/admin/Analytics/SalesAnalytics';
 
-// Protected Route
 import ProtectedRoute from '../components/ProtectedRoute';
 
 const AppRoutes = () => {
@@ -39,7 +36,6 @@ const AppRoutes = () => {
 
   return (
     <Routes>
-      {/* Public Routes - User Layout */}
       <Route element={<UserLayout />}>
         <Route path="/" element={<Home />} />
         <Route path="/products" element={<Products />} />
@@ -59,7 +55,6 @@ const AppRoutes = () => {
         </Route>
       </Route>
 
-      {/* Admin Routes */}
       <Route element={<ProtectedRoute adminOnly />}>
         <Route element={<AdminLayout />}>
           <Route path="/admin/dashboard" element={<Dashboard />} />
@@ -73,7 +68,6 @@ const AppRoutes = () => {
         </Route>
       </Route>
 
-      {/* Redirect unknown routes */}
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );

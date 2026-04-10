@@ -65,6 +65,22 @@ const productSchema = new mongoose.Schema(
       default: false,
     },
     tags: [String],
+    returnPolicy: {
+      isReturnable: {
+        type: Boolean,
+        default: false,
+      },
+      returnWindowDays: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      policyNote: {
+        type: String,
+        default: '',
+        trim: true,
+      },
+    },
   },
   { timestamps: true }
 );
@@ -76,6 +92,15 @@ productSchema.pre('save', function (next) {
   } else {
     this.finalPrice = this.price;
   }
+
+  if (!this.returnPolicy?.isReturnable) {
+    this.returnPolicy = {
+      ...(this.returnPolicy || {}),
+      isReturnable: false,
+      returnWindowDays: 0,
+    };
+  }
+
   next();
 });
 

@@ -23,6 +23,11 @@ const orderSchema = new mongoose.Schema(
           min: 1,
         },
         size: String,
+        returnPolicy: {
+          isReturnable: { type: Boolean, default: false },
+          returnWindowDays: { type: Number, default: 0 },
+          policyNote: { type: String, default: '' },
+        },
       },
     ],
     shippingAddress: {
@@ -45,12 +50,23 @@ const orderSchema = new mongoose.Schema(
     },
     paymentStatus: {
       type: String,
-      enum: ['pending', 'paid', 'failed', 'refunded'],
+      enum: ['pending', 'paid', 'failed', 'refund_pending', 'refunded'],
       default: 'pending',
     },
     orderStatus: {
       type: String,
-      enum: ['Order Placed', 'Packed', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled'],
+      enum: [
+        'Order Placed',
+        'Packed',
+        'Shipped',
+        'Out for Delivery',
+        'Delivered',
+        'Cancelled',
+        'Return Requested',
+        'Return Approved',
+        'Return Rejected',
+        'Refunded',
+      ],
       default: 'Order Placed',
     },
     statusHistory: [
@@ -70,11 +86,28 @@ const orderSchema = new mongoose.Schema(
     },
     deliveredAt: Date,
     estimatedDelivery: Date,
+    returnEligibleUntil: Date,
+    returnRequest: {
+      status: {
+        type: String,
+        enum: ['none', 'requested', 'approved', 'rejected', 'refunded'],
+        default: 'none',
+      },
+      reason: { type: String, default: '' },
+      details: { type: String, default: '' },
+      requestedAt: Date,
+      approvedAt: Date,
+      rejectedAt: Date,
+      refundedAt: Date,
+      adminNote: { type: String, default: '' },
+      refundId: { type: String, default: '' },
+      refundAmount: { type: Number, default: 0 },
+      stockRestored: { type: Boolean, default: false },
+    },
   },
   { timestamps: true }
 );
 
-// Auto-set statusHistory on status change
 orderSchema.pre('save', function (next) {
   if (this.isModified('orderStatus')) {
     this.statusHistory.push({

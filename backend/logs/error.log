@@ -6,3 +6,33 @@
 2026-03-24 23:44:19 [ERROR]: ENOENT: no such file or directory, open 'C:\Users\Abhishek Kangane\new 240226 vijay\NewDormaz\backend\uploads\dormez-1774376059142-30841600.png' - /api/products - POST - ::1
 2026-03-24 23:47:39 [ERROR]: Your account has been blocked. Contact support. - /api/auth/login - POST - ::1
 2026-03-25 00:07:33 [ERROR]: User already exists with this email - /api/auth/register - POST - ::1
+2026-03-30 22:55:10 [ERROR]: ENOENT: no such file or directory, open 'C:\Users\Abhishek Kangane\new 240226 vijay\NewDormaz\backend\uploads\dormez-1774891510801-699547047.png' - /api/products - POST - ::1
+2026-04-10 22:10:24 [ERROR]: Access denied. Admin only. - /api/products/69ccbb504c83bdb023e93161 - PUT - ::1
+2026-04-10 22:12:20 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:12:20 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:12:23 [ERROR]: Access denied. Admin only. - /api/users? - GET - ::1
+2026-04-10 22:12:24 [ERROR]: Access denied. Admin only. - /api/users? - GET - ::1
+2026-04-10 22:12:28 [ERROR]: Access denied. Admin only. - /api/coupons - GET - ::1
+2026-04-10 22:12:28 [ERROR]: Access denied. Admin only. - /api/coupons - GET - ::1
+2026-04-10 22:12:30 [ERROR]: Access denied. Admin only. - /api/admin/analytics - GET - ::1
+2026-04-10 22:12:30 [ERROR]: Access denied. Admin only. - /api/admin/analytics - GET - ::1
+2026-04-10 22:12:37 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-10 22:12:37 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-10 22:12:39 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:12:39 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:12:53 [ERROR]: Access denied. Admin only. - /api/products/69ccbb504c83bdb023e93161 - PUT - ::1
+2026-04-10 22:13:58 [ERROR]: Access denied. Admin only. - /api/products - POST - ::1
+2026-04-10 22:14:29 [ERROR]: Not authorized, no token - /api/orders/my - GET - ::1
+2026-04-10 22:14:29 [ERROR]: Not authorized, no token - /api/orders/my - GET - ::1
+2026-04-10 22:24:12 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:24:12 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:24:26 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:24:26 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:25:00 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:25:01 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-10 22:25:06 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-10 22:25:06 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-10 22:25:10 [ERROR]: Access denied. Admin only. - /api/coupons - GET - ::1
+2026-04-10 22:25:10 [ERROR]: Access denied. Admin only. - /api/coupons - GET - ::1
+2026-04-10 22:25:11 [ERROR]: Access denied. Admin only. - /api/admin/analytics - GET - ::1
+2026-04-10 22:25:11 [ERROR]: Access denied. Admin only. - /api/admin/analytics - GET - ::1

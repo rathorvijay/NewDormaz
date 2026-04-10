@@ -28,7 +28,18 @@ export const updateOrderStatus = createAsyncThunk('admin/updateOrderStatus', asy
     toast.success('Order status updated');
     return res.data.order;
   } catch (err) {
-    toast.error(err.response?.data?.message);
+    toast.error(err.response?.data?.message || 'Failed to update order');
+    return rejectWithValue(err.response?.data?.message);
+  }
+});
+
+export const handleReturnAction = createAsyncThunk('admin/handleReturnAction', async ({ id, action, adminNote }, { rejectWithValue }) => {
+  try {
+    const res = await axiosInstance.put(`/orders/${id}/return-action`, { action, adminNote });
+    toast.success(res.data.message || 'Return action completed');
+    return res.data.order;
+  } catch (err) {
+    toast.error(err.response?.data?.message || 'Return action failed');
     return rejectWithValue(err.response?.data?.message);
   }
 });
@@ -76,7 +87,7 @@ export const createCoupon = createAsyncThunk('admin/createCoupon', async (data, 
     toast.success('Coupon created successfully');
     return res.data.coupon;
   } catch (err) {
-    toast.error(err.response?.data?.message);
+    toast.error(err.response?.data?.message || 'Failed to create coupon');
     return rejectWithValue(err.response?.data?.message);
   }
 });
@@ -107,26 +118,45 @@ const adminSlice = createSlice({
   reducers: {},
   extraReducers: (builder) => {
     builder
+      .addCase(fetchAllOrders.pending, (state) => {
+        state.loading = true;
+      })
       .addCase(fetchAllOrders.fulfilled, (state, action) => {
+        state.loading = false;
         state.orders = action.payload.orders;
         state.total = action.payload.total;
         state.pages = action.payload.pages;
+      })
+      .addCase(fetchAllOrders.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
       })
       .addCase(fetchAllUsers.fulfilled, (state, action) => {
         state.users = action.payload.users;
       })
       .addCase(updateOrderStatus.fulfilled, (state, action) => {
-        state.orders = state.orders.map(o => o._id === action.payload._id ? action.payload : o);
+        state.orders = state.orders.map((o) => (o._id === action.payload._id ? action.payload : o));
+      })
+      .addCase(handleReturnAction.fulfilled, (state, action) => {
+        state.orders = state.orders.map((o) => (o._id === action.payload._id ? action.payload : o));
       })
       .addCase(toggleBlockUser.fulfilled, (state, action) => {
-        state.users = state.users.map(u => u._id === action.payload.id ? { ...u, isBlocked: action.payload.isBlocked } : u);
+        state.users = state.users.map((u) => (u._id === action.payload.id ? { ...u, isBlocked: action.payload.isBlocked } : u));
       })
-      .addCase(fetchDashboard.fulfilled, (state, action) => { state.dashboard = action.payload; })
-      .addCase(fetchAnalytics.fulfilled, (state, action) => { state.analytics = action.payload; })
-      .addCase(fetchAllCoupons.fulfilled, (state, action) => { state.coupons = action.payload; })
-      .addCase(createCoupon.fulfilled, (state, action) => { state.coupons.unshift(action.payload); })
+      .addCase(fetchDashboard.fulfilled, (state, action) => {
+        state.dashboard = action.payload;
+      })
+      .addCase(fetchAnalytics.fulfilled, (state, action) => {
+        state.analytics = action.payload;
+      })
+      .addCase(fetchAllCoupons.fulfilled, (state, action) => {
+        state.coupons = action.payload;
+      })
+      .addCase(createCoupon.fulfilled, (state, action) => {
+        state.coupons.unshift(action.payload);
+      })
       .addCase(deleteCoupon.fulfilled, (state, action) => {
-        state.coupons = state.coupons.filter(c => c._id !== action.payload);
+        state.coupons = state.coupons.filter((c) => c._id !== action.payload);
       });
   },
 });

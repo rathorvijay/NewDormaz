@@ -1,8 +1,22 @@
 import React, { useState } from 'react';
 import {
-  Box, Typography, Card, CardContent, TextField, Button, Grid,
-  Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel,
-  CircularProgress, IconButton, Alert
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  TextField,
+  Button,
+  Grid,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Switch,
+  FormControlLabel,
+  CircularProgress,
+  IconButton,
+  Alert,
+  Divider,
 } from '@mui/material';
 import { ArrowBack, CloudUpload, Delete } from '@mui/icons-material';
 import { useDispatch } from 'react-redux';
@@ -18,8 +32,20 @@ const AddProduct = () => {
   const [previews, setPreviews] = useState([]);
 
   const [form, setForm] = useState({
-    name: '', category: '', size: '', thickness: '', price: '',
-    discount: 0, stock: '', description: '', features: '', tags: '', isFeatured: false,
+    name: '',
+    category: '',
+    size: '',
+    thickness: '',
+    price: '',
+    discount: 0,
+    stock: '',
+    description: '',
+    features: '',
+    tags: '',
+    isFeatured: false,
+    isReturnable: false,
+    returnWindowDays: 7,
+    policyNote: '',
   });
 
   const handleChange = (e) => {
@@ -30,16 +56,17 @@ const AddProduct = () => {
   const handleImageChange = (e) => {
     const files = Array.from(e.target.files);
     setImages(files);
-    setPreviews(files.map(file => URL.createObjectURL(file)));
+    setPreviews(files.map((file) => URL.createObjectURL(file)));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true); setError('');
+    setLoading(true);
+    setError('');
     try {
       const formData = new FormData();
       Object.entries(form).forEach(([k, v]) => formData.append(k, v));
-      images.forEach(img => formData.append('images', img));
+      images.forEach((img) => formData.append('images', img));
 
       const result = await dispatch(createProduct(formData));
       if (result.meta.requestStatus === 'fulfilled') {
@@ -71,14 +98,13 @@ const AddProduct = () => {
                 <Typography variant="h6" fontWeight={700} gutterBottom>Product Information</Typography>
                 <Grid container spacing={2}>
                   <Grid item xs={12}>
-                    <TextField fullWidth label="Product Name" name="name" value={form.name}
-                      onChange={handleChange} required />
+                    <TextField fullWidth label="Product Name" name="name" value={form.name} onChange={handleChange} required />
                   </Grid>
                   <Grid item xs={6}>
                     <FormControl fullWidth required>
                       <InputLabel>Category</InputLabel>
                       <Select name="category" value={form.category} onChange={handleChange} label="Category">
-                        {['Luxury', 'Ortho', 'Premium', 'Memory', 'Spring'].map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                        {['Luxury', 'Ortho', 'Premium', 'Memory', 'Spring'].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
                       </Select>
                     </FormControl>
                   </Grid>
@@ -86,7 +112,7 @@ const AddProduct = () => {
                     <FormControl fullWidth required>
                       <InputLabel>Size</InputLabel>
                       <Select name="size" value={form.size} onChange={handleChange} label="Size">
-                        {['Single', 'Double', 'Queen', 'King', 'Custom'].map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+                        {['Single', 'Double', 'Queen', 'King', 'Custom'].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
                       </Select>
                     </FormControl>
                   </Grid>
@@ -103,22 +129,32 @@ const AddProduct = () => {
                     <TextField fullWidth label="Stock Quantity" name="stock" type="number" value={form.stock} onChange={handleChange} required />
                   </Grid>
                   <Grid item xs={6}>
-                    <TextField fullWidth label="Tags (comma separated)" name="tags" value={form.tags} onChange={handleChange} placeholder="comfort,ortho,luxury" />
+                    <TextField fullWidth label="Tags (comma or line separated)" name="tags" value={form.tags} onChange={handleChange} placeholder="comfort, ortho, luxury" />
                   </Grid>
                   <Grid item xs={12}>
-                    <TextField fullWidth label="Features (one per line)" name="features" value={form.features}
-                      onChange={handleChange} multiline rows={3} placeholder="Premium foam&#10;5 year warranty&#10;Easy to clean" />
+                    <TextField fullWidth label="Features (one per line)" name="features" value={form.features} onChange={handleChange} multiline rows={3} placeholder="Premium foam&#10;5 year warranty&#10;Easy to clean" />
                   </Grid>
                   <Grid item xs={12}>
-                    <TextField fullWidth label="Description" name="description" value={form.description}
-                      onChange={handleChange} multiline rows={4} required />
+                    <TextField fullWidth label="Description" name="description" value={form.description} onChange={handleChange} multiline rows={4} required />
                   </Grid>
                   <Grid item xs={12}>
-                    <FormControlLabel
-                      control={<Switch name="isFeatured" checked={form.isFeatured} onChange={handleChange} color="secondary" />}
-                      label="Mark as Featured Product"
-                    />
+                    <FormControlLabel control={<Switch name="isFeatured" checked={form.isFeatured} onChange={handleChange} color="secondary" />} label="Mark as Featured Product" />
                   </Grid>
+                  <Grid item xs={12}>
+                    <Divider sx={{ my: 1 }} />
+                    <Typography variant="subtitle1" fontWeight={700} gutterBottom>Return Policy</Typography>
+                    <FormControlLabel control={<Switch name="isReturnable" checked={form.isReturnable} onChange={handleChange} color="primary" />} label="Allow returns for this product" />
+                  </Grid>
+                  {form.isReturnable && (
+                    <>
+                      <Grid item xs={6}>
+                        <TextField fullWidth label="Return window (days)" name="returnWindowDays" type="number" value={form.returnWindowDays} onChange={handleChange} inputProps={{ min: 1 }} required />
+                      </Grid>
+                      <Grid item xs={12}>
+                        <TextField fullWidth label="Policy note" name="policyNote" value={form.policyNote} onChange={handleChange} multiline rows={2} placeholder="Example: Mattress must be unused and in original packaging." />
+                      </Grid>
+                    </>
+                  )}
                 </Grid>
               </CardContent>
             </Card>
@@ -128,10 +164,7 @@ const AddProduct = () => {
             <Card>
               <CardContent>
                 <Typography variant="h6" fontWeight={700} gutterBottom>Product Images</Typography>
-                <Button
-                  variant="outlined" fullWidth startIcon={<CloudUpload />}
-                  component="label" sx={{ mb: 2 }}
-                >
+                <Button variant="outlined" fullWidth startIcon={<CloudUpload />} component="label" sx={{ mb: 2 }}>
                   Upload Images
                   <input type="file" hidden multiple accept="image/*" onChange={handleImageChange} />
                 </Button>
@@ -139,7 +172,7 @@ const AddProduct = () => {
                   {previews.map((preview, i) => (
                     <Grid item xs={6} key={i}>
                       <Box sx={{ position: 'relative', borderRadius: 2, overflow: 'hidden', height: 100 }}>
-                        <img src={preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={preview} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         <IconButton
                           size="small"
                           sx={{ position: 'absolute', top: 2, right: 2, bgcolor: 'error.main', color: 'white', '&:hover': { bgcolor: 'error.dark' } }}
@@ -163,10 +196,7 @@ const AddProduct = () => {
               </CardContent>
             </Card>
 
-            <Button
-              type="submit" variant="contained" fullWidth size="large"
-              disabled={loading} sx={{ mt: 2, py: 1.5 }}
-            >
+            <Button type="submit" variant="contained" fullWidth size="large" disabled={loading} sx={{ mt: 2, py: 1.5 }}>
               {loading ? <CircularProgress size={24} color="inherit" /> : 'Create Product'}
             </Button>
           </Grid>
