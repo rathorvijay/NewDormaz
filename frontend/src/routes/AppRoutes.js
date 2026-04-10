@@ -18,6 +18,8 @@ import Profile from '../pages/user/Profile/Profile';
 import Login from '../pages/user/Auth/Login';
 import Register from '../pages/user/Auth/Register';
 import ForgotPassword from '../pages/user/Auth/ForgotPassword';
+import ResetPassword from '../pages/user/Auth/ResetPassword';
+
 
 // Admin Pages
 import Dashboard from '../pages/admin/Dashboard/Dashboard';
@@ -43,6 +45,7 @@ const AppRoutes = () => {
         <Route path="/products" element={<Products />} />
         <Route path="/products/:id" element={<ProductDetails />} />
         <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+<Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/register" element={!user ? <Register /> : <Navigate to="/" />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
 
