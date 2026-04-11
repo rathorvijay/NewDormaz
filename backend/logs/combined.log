@@ -83,3 +83,9 @@
 2026-04-12 00:05:08 [INFO]: Email sent: <fc48df43-7b58-dd35-a623-1968bfbdeaa3@gmail.com> to rathorvijay731@gmail.com
 2026-04-12 00:09:30 [ERROR]: Not authorized, no token - /api/admin/analytics - GET - ::1
 2026-04-12 00:09:30 [ERROR]: Not authorized, no token - /api/admin/analytics - GET - ::1
+2026-04-12 00:13:40 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-12 00:13:43 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-04-12 00:14:13 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-12 00:14:27 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-12 00:15:11 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-12 00:17:33 [INFO]: Email sent: <ebf96dc6-ad98-6525-35af-b078b860d782@gmail.com> to rathorvijay731@gmail.com
