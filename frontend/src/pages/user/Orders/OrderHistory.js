@@ -1,9 +1,18 @@
 import React, { useEffect } from 'react';
 import {
-  Box, Container, Typography, Card, CardContent, Chip, Grid,
-  Button, Divider, Avatar
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  Container,
+  Divider,
+  Grid,
+  Avatar,
+  Stack,
+  Typography,
 } from '@mui/material';
-import { ShoppingBag, ArrowForward, Visibility } from '@mui/icons-material';
+import { Autorenew, ArrowForward, Visibility, ShoppingBag } from '@mui/icons-material';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { fetchMyOrders } from '../../../redux/orderSlice';
@@ -12,11 +21,11 @@ import { formatPrice } from '../../../utils/formatPrice';
 
 const statusColors = {
   'Order Placed': 'info',
-  'Packed': 'warning',
-  'Shipped': 'secondary',
+  Packed: 'warning',
+  Shipped: 'secondary',
   'Out for Delivery': 'primary',
-  'Delivered': 'success',
-  'Cancelled': 'error',
+  Delivered: 'success',
+  Cancelled: 'error',
 };
 
 const OrderHistory = () => {
@@ -24,7 +33,9 @@ const OrderHistory = () => {
   const navigate = useNavigate();
   const { orders, loading } = useSelector((state) => state.orders);
 
-  useEffect(() => { dispatch(fetchMyOrders()); }, [dispatch]);
+  useEffect(() => {
+    dispatch(fetchMyOrders());
+  }, [dispatch]);
 
   if (loading) return <Loader message="Loading orders..." />;
 
@@ -44,9 +55,7 @@ const OrderHistory = () => {
             <Typography variant="h1" mb={2}>📦</Typography>
             <Typography variant="h5" fontWeight={600} mb={1}>No orders yet</Typography>
             <Typography color="text.secondary" mb={3}>Start shopping to place your first order!</Typography>
-            <Button variant="contained" onClick={() => navigate('/products')} endIcon={<ArrowForward />}>
-              Shop Now
-            </Button>
+            <Button variant="contained" onClick={() => navigate('/products')} endIcon={<ArrowForward />}>Shop Now</Button>
           </Box>
         ) : (
           orders.map((order) => (
@@ -57,32 +66,37 @@ const OrderHistory = () => {
                     <Typography variant="caption" color="text.secondary">Order ID</Typography>
                     <Typography variant="body2" fontWeight={700} sx={{ fontFamily: 'monospace' }}>#{order._id.slice(-8).toUpperCase()}</Typography>
                   </Box>
-                  <Chip
-                    label={order.orderStatus}
-                    color={statusColors[order.orderStatus] || 'default'}
-                    size="small"
-                    sx={{ fontWeight: 700 }}
-                  />
+                  <Chip label={order.orderStatus} color={statusColors[order.orderStatus] || 'default'} size="small" sx={{ fontWeight: 700 }} />
                   <Box sx={{ textAlign: 'right' }}>
                     <Typography variant="caption" color="text.secondary">Order Date</Typography>
-                    <Typography variant="body2" fontWeight={600}>
-                      {new Date(order.createdAt).toLocaleDateString('en-IN')}
-                    </Typography>
+                    <Typography variant="body2" fontWeight={600}>{new Date(order.createdAt).toLocaleDateString('en-IN')}</Typography>
                   </Box>
                 </Box>
 
-                {/* Products */}
-                <Box sx={{ display: 'flex', gap: 1, mb: 2, overflowX: 'auto' }}>
-                  {order.products.map((item, i) => (
-                    <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1, bgcolor: '#f5f5f5', borderRadius: 2, p: 1, flexShrink: 0 }}>
-                      <Avatar src={item.image} variant="rounded" sx={{ width: 48, height: 48 }}>📦</Avatar>
-                      <Box>
-                        <Typography variant="body2" fontWeight={600} noWrap sx={{ maxWidth: 120 }}>{item.name}</Typography>
-                        <Typography variant="caption" color="text.secondary">Qty: {item.quantity} • {item.size}</Typography>
+                <Grid container spacing={2} sx={{ mb: 1 }}>
+                  {order.products.map((item) => (
+                    <Grid item xs={12} md={6} key={item._id}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#f5f5f5', borderRadius: 2, p: 1.5, height: '100%' }}>
+                        <Avatar src={item.image} variant="rounded" sx={{ width: 56, height: 56 }}>📦</Avatar>
+                        <Box sx={{ flexGrow: 1 }}>
+                          <Typography variant="body2" fontWeight={700}>{item.name}</Typography>
+                          <Typography variant="caption" color="text.secondary">Qty: {item.quantity} • {item.size}</Typography>
+                          <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
+                            {item.returnMeta?.eligible && (
+                              <Chip size="small" color="success" icon={<Autorenew />} label={item.returnMeta.countdownText} />
+                            )}
+                            {item.returnMeta?.deadlineText && !item.returnMeta?.existingReturn && (
+                              <Chip size="small" variant="outlined" label={`Return till ${item.returnMeta.deadlineText}`} />
+                            )}
+                            {item.returnMeta?.existingReturn && (
+                              <Chip size="small" color="warning" label={`Return: ${item.returnMeta.existingReturn.status}`} />
+                            )}
+                          </Stack>
+                        </Box>
                       </Box>
-                    </Box>
+                    </Grid>
                   ))}
-                </Box>
+                </Grid>
 
                 <Divider sx={{ mb: 2 }} />
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
@@ -103,12 +117,8 @@ const OrderHistory = () => {
                       </Typography>
                     </Box>
                   </Box>
-                  <Button
-                    variant="outlined" startIcon={<Visibility />}
-                    onClick={() => navigate(`/orders/${order._id}`)}
-                    size="small"
-                  >
-                    Track Order
+                  <Button variant="outlined" startIcon={<Visibility />} onClick={() => navigate(`/orders/${order._id}`)} size="small">
+                    Track Order / Return
                   </Button>
                 </Box>
               </CardContent>

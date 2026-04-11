@@ -6,3 +6,17 @@
 2026-03-24 23:44:19 [ERROR]: ENOENT: no such file or directory, open 'C:\Users\Abhishek Kangane\new 240226 vijay\NewDormaz\backend\uploads\dormez-1774376059142-30841600.png' - /api/products - POST - ::1
 2026-03-24 23:47:39 [ERROR]: Your account has been blocked. Contact support. - /api/auth/login - POST - ::1
 2026-03-25 00:07:33 [ERROR]: User already exists with this email - /api/auth/register - POST - ::1
+2026-04-11 23:53:47 [ERROR]: Email failed to rathorvijay731@gmail.com: Client network socket disconnected before secure TLS connection was established
+2026-04-11 23:53:56 [ERROR]: Email failed to rathorvijay731@gmail.com: read ECONNRESET
+2026-04-11 23:54:20 [ERROR]: Email failed to rathorvijay731@gmail.com: Client network socket disconnected before secure TLS connection was established
+2026-04-11 23:55:57 [ERROR]: Not authorized, invalid token - /api/admin/dashboard - GET - ::1
+2026-04-11 23:55:57 [ERROR]: Not authorized, invalid token - /api/admin/dashboard - GET - ::1
+2026-04-11 23:56:04 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:56:21 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:56:45 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:56:53 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:57:28 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:58:08 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-12 00:00:29 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-12 00:09:30 [ERROR]: Not authorized, no token - /api/admin/analytics - GET - ::1
+2026-04-12 00:09:30 [ERROR]: Not authorized, no token - /api/admin/analytics - GET - ::1

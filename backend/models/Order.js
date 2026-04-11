@@ -23,6 +23,14 @@ const orderSchema = new mongoose.Schema(
           min: 1,
         },
         size: String,
+        isReturnable: {
+          type: Boolean,
+          default: true,
+        },
+        returnWindowDays: {
+          type: Number,
+          default: 7,
+        },
       },
     ],
     shippingAddress: {
@@ -74,7 +82,6 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Auto-set statusHistory on status change
 orderSchema.pre('save', function (next) {
   if (this.isModified('orderStatus')) {
     this.statusHistory.push({

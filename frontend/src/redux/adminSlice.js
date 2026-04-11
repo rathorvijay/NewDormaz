@@ -12,6 +12,27 @@ export const fetchAllOrders = createAsyncThunk('admin/fetchOrders', async (param
   }
 });
 
+export const fetchReturnRequests = createAsyncThunk('admin/fetchReturns', async (params, { rejectWithValue }) => {
+  try {
+    const query = new URLSearchParams(params).toString();
+    const res = await axiosInstance.get(`/admin/returns?${query}`);
+    return res.data;
+  } catch (err) {
+    return rejectWithValue(err.response?.data?.message);
+  }
+});
+
+export const updateReturnRequestStatus = createAsyncThunk('admin/updateReturnStatus', async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    const res = await axiosInstance.put(`/admin/returns/${id}/status`, payload);
+    toast.success('Return request updated');
+    return res.data.returnRequest;
+  } catch (err) {
+    toast.error(err.response?.data?.message || 'Failed to update return request');
+    return rejectWithValue(err.response?.data?.message);
+  }
+});
+
 export const fetchAllUsers = createAsyncThunk('admin/fetchUsers', async (params, { rejectWithValue }) => {
   try {
     const query = new URLSearchParams(params).toString();
@@ -95,38 +116,61 @@ const adminSlice = createSlice({
   name: 'admin',
   initialState: {
     orders: [],
+    returnRequests: [],
     users: [],
     coupons: [],
     dashboard: null,
     analytics: null,
     total: 0,
     pages: 1,
+    returnTotal: 0,
+    returnPages: 1,
     loading: false,
     error: null,
   },
   reducers: {},
   extraReducers: (builder) => {
     builder
+      .addCase(fetchAllOrders.pending, (state) => {
+        state.loading = true;
+      })
       .addCase(fetchAllOrders.fulfilled, (state, action) => {
+        state.loading = false;
         state.orders = action.payload.orders;
         state.total = action.payload.total;
         state.pages = action.payload.pages;
+      })
+      .addCase(fetchReturnRequests.fulfilled, (state, action) => {
+        state.returnRequests = action.payload.returns;
+        state.returnTotal = action.payload.total;
+        state.returnPages = action.payload.pages;
       })
       .addCase(fetchAllUsers.fulfilled, (state, action) => {
         state.users = action.payload.users;
       })
       .addCase(updateOrderStatus.fulfilled, (state, action) => {
-        state.orders = state.orders.map(o => o._id === action.payload._id ? action.payload : o);
+        state.orders = state.orders.map((o) => (o._id === action.payload._id ? action.payload : o));
+      })
+      .addCase(updateReturnRequestStatus.fulfilled, (state, action) => {
+        state.returnRequests = state.returnRequests.map((item) => (item._id === action.payload._id ? action.payload : item));
       })
       .addCase(toggleBlockUser.fulfilled, (state, action) => {
-        state.users = state.users.map(u => u._id === action.payload.id ? { ...u, isBlocked: action.payload.isBlocked } : u);
+        state.users = state.users.map((u) => (u._id === action.payload.id ? { ...u, isBlocked: action.payload.isBlocked } : u));
       })
-      .addCase(fetchDashboard.fulfilled, (state, action) => { state.dashboard = action.payload; })
-      .addCase(fetchAnalytics.fulfilled, (state, action) => { state.analytics = action.payload; })
-      .addCase(fetchAllCoupons.fulfilled, (state, action) => { state.coupons = action.payload; })
-      .addCase(createCoupon.fulfilled, (state, action) => { state.coupons.unshift(action.payload); })
+      .addCase(fetchDashboard.fulfilled, (state, action) => {
+        state.dashboard = action.payload;
+      })
+      .addCase(fetchAnalytics.fulfilled, (state, action) => {
+        state.analytics = action.payload;
+      })
+      .addCase(fetchAllCoupons.fulfilled, (state, action) => {
+        state.coupons = action.payload;
+      })
+      .addCase(createCoupon.fulfilled, (state, action) => {
+        state.coupons.unshift(action.payload);
+      })
       .addCase(deleteCoupon.fulfilled, (state, action) => {
-        state.coupons = state.coupons.filter(c => c._id !== action.payload);
+        state.coupons = state.coupons.filter((c) => c._id !== action.payload);
       });
   },
 });

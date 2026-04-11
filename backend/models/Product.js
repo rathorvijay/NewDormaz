@@ -64,12 +64,21 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isReturnable: {
+      type: Boolean,
+      default: true,
+    },
+    returnWindowDays: {
+      type: Number,
+      default: 7,
+      min: 1,
+      max: 30,
+    },
     tags: [String],
   },
   { timestamps: true }
 );
 
-// Auto-calculate finalPrice before save
 productSchema.pre('save', function (next) {
   if (this.discount > 0) {
     this.finalPrice = Math.round(this.price - (this.price * this.discount) / 100);
@@ -79,7 +88,6 @@ productSchema.pre('save', function (next) {
   next();
 });
 
-// Virtual for low stock alert
 productSchema.virtual('isLowStock').get(function () {
   return this.stock <= 5;
 });

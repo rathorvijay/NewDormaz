@@ -1,7 +1,18 @@
 import React, { useState } from 'react';
 import {
-  Box, Container, Card, CardContent, TextField, Button, Typography,
-  Link, InputAdornment, IconButton, Divider, CircularProgress
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CircularProgress,
+  Divider,
+  IconButton,
+  InputAdornment,
+  Link,
+  TextField,
+  Typography,
+  Container,
 } from '@mui/material';
 import { Email, Lock, Visibility, VisibilityOff, Bedtime } from '@mui/icons-material';
 import { useDispatch, useSelector } from 'react-redux';
@@ -11,16 +22,26 @@ import { loginUser } from '../../../redux/authSlice';
 const Login = () => {
   const [form, setForm] = useState({ email: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
+  const [localMessage, setLocalMessage] = useState('');
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { loading } = useSelector((state) => state.auth);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLocalMessage('');
     const result = await dispatch(loginUser(form));
     if (result.meta.requestStatus === 'fulfilled') {
       const user = result.payload.user;
       navigate(user.role === 'admin' ? '/admin/dashboard' : '/');
+    } else if (result.payload?.requiresVerification) {
+      setLocalMessage(result.payload.message);
+      navigate('/register', {
+        state: {
+          email: result.payload.email || form.email,
+          verificationRequired: true,
+        },
+      });
     }
   };
 
@@ -34,6 +55,7 @@ const Login = () => {
         </Box>
         <Card elevation={0} sx={{ border: '1px solid #e0e0e0' }}>
           <CardContent sx={{ p: 4 }}>
+            {localMessage && <Alert severity="info" sx={{ mb: 2 }}>{localMessage}</Alert>}
             <form onSubmit={handleSubmit}>
               <TextField
                 fullWidth label="Email Address" type="email" value={form.email}
@@ -61,19 +83,14 @@ const Login = () => {
                   Forgot Password?
                 </Link>
               </Box>
-              <Button
-                type="submit" variant="contained" fullWidth size="large"
-                disabled={loading} sx={{ py: 1.5, fontSize: 16, borderRadius: 2 }}
-              >
+              <Button type="submit" variant="contained" fullWidth size="large" disabled={loading} sx={{ py: 1.5, fontSize: 16, borderRadius: 2 }}>
                 {loading ? <CircularProgress size={24} color="inherit" /> : 'Sign In'}
               </Button>
             </form>
             <Divider sx={{ my: 3 }}>OR</Divider>
             <Typography textAlign="center" variant="body2">
               Don't have an account?{' '}
-              <Link component={RouterLink} to="/register" color="primary" fontWeight={600}>
-                Register Now
-              </Link>
+              <Link component={RouterLink} to="/register" color="primary" fontWeight={600}>Register Now</Link>
             </Typography>
           </CardContent>
         </Card>

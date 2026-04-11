@@ -34,3 +34,52 @@
 2026-03-25 01:18:57 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
 2026-03-25 01:30:52 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
 2026-03-25 01:30:55 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-01.4vethwx.mongodb.net
+2026-04-11 23:09:07 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-11 23:09:10 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-00.4vethwx.mongodb.net
+2026-04-11 23:26:33 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-11 23:26:37 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-04-11 23:31:53 [INFO]: Email sent: <96b0c9d1-6ebe-8b9e-22ae-72dd74d8e332@gmail.com> to rathorvijay856@gmail.com
+2026-04-11 23:32:23 [INFO]: Email sent: <3b8b773e-8e24-3a9a-8c48-511937a3eda2@gmail.com> to rathorvijay856@gmail.com
+2026-04-11 23:37:59 [INFO]: Email sent: <29a033a8-6dfc-5519-cc34-9932b8238d3c@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:38:19 [INFO]: Email sent: <f7da3cb2-cca3-c609-69ae-dfbace6647f2@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:39:50 [INFO]: Email sent: <6037bc46-5775-ed62-0dd9-af9e0e7fa96c@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:53:47 [ERROR]: Email failed to rathorvijay731@gmail.com: Client network socket disconnected before secure TLS connection was established
+2026-04-11 23:53:56 [ERROR]: Email failed to rathorvijay731@gmail.com: read ECONNRESET
+2026-04-11 23:53:56 [INFO]: Email sent: <8eab01b8-4abd-6f42-761e-437a444d64cd@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:53:58 [INFO]: Email sent: <e5230de1-ffeb-da43-b9f2-b9992c19928b@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:08 [INFO]: Email sent: <b2808b18-ac0a-9cf6-25cc-947eb669462b@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:12 [INFO]: Email sent: <7ea3c9cd-1b7a-4332-5663-a1a53431aba1@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:13 [INFO]: Email sent: <34de4503-73f4-bf40-af0b-af5b82a67bb5@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:20 [ERROR]: Email failed to rathorvijay731@gmail.com: Client network socket disconnected before secure TLS connection was established
+2026-04-11 23:54:23 [INFO]: Email sent: <75eb78fa-b5cf-d896-a81b-dbaf0692bbe7@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:23 [INFO]: Email sent: <dff8d26f-6316-57f5-a413-3cf10f9575b9@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:24 [INFO]: Email sent: <fdc1424d-3280-2e57-176f-1393af8d0e92@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:24 [INFO]: Email sent: <b019906d-fce5-fa50-cdfa-bd03f50e563c@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:25 [INFO]: Email sent: <8c43806b-14ce-086d-8980-1e20bc673d36@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:25 [INFO]: Email sent: <f40c1327-3cce-3aef-4c35-91304c537815@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:25 [INFO]: Email sent: <465b5336-5bc4-4e59-5b95-16e4e7840dd9@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:30 [INFO]: Email sent: <b1692b6f-b462-fde0-0050-644257d8e6c8@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:30 [INFO]: Email sent: <3268da27-3108-0c6a-11e5-4b77a97a3b28@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:31 [INFO]: Email sent: <35049d51-383d-e93a-bde0-00a259bf4c00@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:31 [INFO]: Email sent: <b59bb230-b9c2-8ce3-a4c6-a9aa6b985ba2@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:32 [INFO]: Email sent: <a297f397-37c0-55a3-dfed-4decaff283cc@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:32 [INFO]: Email sent: <0c048093-ecbc-e13e-447a-61038e1c8c5c@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:34 [INFO]: Email sent: <d616e3dd-3444-32d8-009d-4c813841c31a@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:54:35 [INFO]: Email sent: <c02c9c2e-4700-0936-9b09-81bfe8af6f5c@gmail.com> to rathorvijay731@gmail.com
+2026-04-11 23:55:46 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-11 23:55:50 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-04-11 23:55:57 [ERROR]: Not authorized, invalid token - /api/admin/dashboard - GET - ::1
+2026-04-11 23:55:57 [ERROR]: Not authorized, invalid token - /api/admin/dashboard - GET - ::1
+2026-04-11 23:56:04 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:56:21 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:56:45 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:56:53 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:57:28 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-11 23:57:53 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-11 23:58:07 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-04-11 23:58:08 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-12 00:00:29 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-12 00:04:46 [INFO]: Email sent: <2db2a147-1041-b4c2-80ea-8501a745dd90@gmail.com> to rathorvijay731@gmail.com
+2026-04-12 00:05:08 [INFO]: Email sent: <fc48df43-7b58-dd35-a623-1968bfbdeaa3@gmail.com> to rathorvijay731@gmail.com
+2026-04-12 00:09:30 [ERROR]: Not authorized, no token - /api/admin/analytics - GET - ::1
+2026-04-12 00:09:30 [ERROR]: Not authorized, no token - /api/admin/analytics - GET - ::1

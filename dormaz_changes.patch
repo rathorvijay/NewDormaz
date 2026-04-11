@@ -1,0 +1,3204 @@
+diff --git a/backend/controllers/adminController.js b/backend/controllers/adminController.js
+index ccd1675..3a9500f 100644
+--- a/backend/controllers/adminController.js
++++ b/backend/controllers/adminController.js
+@@ -2,16 +2,17 @@ const asyncHandler = require('express-async-handler');
+ const User = require('../models/User');
+ const Product = require('../models/Product');
+ const Order = require('../models/Order');
++const ReturnRequest = require('../models/Return');
+ 
+-// @desc    Admin Dashboard Summary
+-// @route   GET /api/admin/dashboard
+-// @access  Admin
+ const getDashboard = asyncHandler(async (req, res) => {
+   const totalUsers = await User.countDocuments({ role: 'user' });
+   const totalProducts = await Product.countDocuments();
+   const totalOrders = await Order.countDocuments();
+   const pendingOrders = await Order.countDocuments({ orderStatus: 'Order Placed' });
+   const lowStockProducts = await Product.countDocuments({ stock: { $lte: 5 } });
++  const totalReturnRequests = await ReturnRequest.countDocuments();
++  const pendingReturnRequests = await ReturnRequest.countDocuments({ status: { $in: ['Requested', 'Approved', 'Pickup Scheduled'] } });
++  const highRiskReturns = await ReturnRequest.countDocuments({ 'fraudSignals.highRisk': true });
+ 
+   const revenueAgg = await Order.aggregate([
+     { $match: { paymentStatus: 'paid' } },
+@@ -27,6 +28,11 @@ const getDashboard = asyncHandler(async (req, res) => {
+     .sort({ createdAt: -1 })
+     .limit(5);
+ 
++  const recentReturns = await ReturnRequest.find()
++    .populate('userId', 'name email')
++    .sort({ createdAt: -1 })
++    .limit(5);
++
+   res.json({
+     success: true,
+     stats: {
+@@ -36,9 +42,13 @@ const getDashboard = asyncHandler(async (req, res) => {
+       pendingOrders,
+       lowStockProducts,
+       totalRevenue: revenueAgg[0]?.total || 0,
++      totalReturnRequests,
++      pendingReturnRequests,
++      highRiskReturns,
+     },
+     recentOrders,
+     recentUsers,
++    recentReturns,
+   });
+ });
+ 
+diff --git a/backend/controllers/authController.js b/backend/controllers/authController.js
+index 2b00730..abbb50d 100644
+--- a/backend/controllers/authController.js
++++ b/backend/controllers/authController.js
+@@ -1,24 +1,217 @@
+ const asyncHandler = require('express-async-handler');
++const crypto = require('crypto');
+ const User = require('../models/User');
+ const generateToken = require('../utils/generateToken');
+ const sendEmail = require('../utils/sendEmail');
+-const crypto = require('crypto');
++const {
++  OTP_EXPIRY_MINUTES,
++  OTP_RESEND_COOLDOWN_SECONDS,
++  OTP_MAX_ATTEMPTS,
++  OTP_BLOCK_MINUTES,
++  OTP_MAX_REQUESTS_PER_HOUR,
++  generateOtpCode,
++  hashOtpCode,
++} = require('../utils/otpUtils');
++
++const getOtpCooldownMeta = (user) => {
++  const resendAvailableAt = user.emailOtpLastSentAt
++    ? new Date(user.emailOtpLastSentAt.getTime() + OTP_RESEND_COOLDOWN_SECONDS * 1000)
++    : new Date();
++
++  return {
++    expiresAt: user.emailOtpExpire,
++    resendAvailableAt,
++    cooldownSeconds: Math.max(0, Math.ceil((resendAvailableAt.getTime() - Date.now()) / 1000)),
++  };
++};
++
++const clearOtpState = (user) => {
++  user.emailOtpHash = undefined;
++  user.emailOtpExpire = undefined;
++  user.emailOtpAttempts = 0;
++  user.emailOtpLastSentAt = undefined;
++  user.emailOtpBlockedUntil = undefined;
++  user.emailOtpRequestCount = 0;
++  user.emailOtpFirstRequestAt = undefined;
++};
++
++const sendVerificationOtpEmail = async (user, otp) => {
++  await sendEmail({
++    to: user.email,
++    subject: 'Dormez Email Verification OTP',
++    html: `
++      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
++        <div style="background:#1a237e;color:#fff;padding:20px;border-radius:10px 10px 0 0;">
++          <h2 style="margin:0;">Dormez Email Verification</h2>
++        </div>
++        <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 10px 10px;">
++          <p>Hi <strong>${user.name}</strong>,</p>
++          <p>Use the OTP below to verify your Dormez account registration:</p>
++          <div style="font-size:32px;font-weight:800;letter-spacing:8px;text-align:center;background:#f5f7ff;padding:18px;border-radius:12px;color:#1a237e;margin:24px 0;">
++            ${otp}
++          </div>
++          <p>This OTP is valid for <strong>${OTP_EXPIRY_MINUTES} minutes</strong>.</p>
++          <p>You can request a new OTP after <strong>${OTP_RESEND_COOLDOWN_SECONDS} seconds</strong>. After multiple failed attempts, verification is temporarily blocked for security.</p>
++          <p style="margin-top:24px;">If you did not create this account, you can ignore this email.</p>
++          <p>Team Dormez</p>
++        </div>
++      </div>
++    `,
++    text: `Your Dormez verification OTP is ${otp}. It is valid for ${OTP_EXPIRY_MINUTES} minutes.`,
++  });
++};
++
++const prepareAndSendOtp = async (user, { force = false } = {}) => {
++  const now = new Date();
++
++  if (user.emailOtpBlockedUntil && user.emailOtpBlockedUntil > now) {
++    const seconds = Math.ceil((user.emailOtpBlockedUntil.getTime() - now.getTime()) / 1000);
++    const error = new Error(`OTP verification is temporarily blocked. Try again in ${seconds} seconds.`);
++    error.statusCode = 429;
++    throw error;
++  }
++
++  if (
++    !force &&
++    user.emailOtpLastSentAt &&
++    now.getTime() - new Date(user.emailOtpLastSentAt).getTime() < OTP_RESEND_COOLDOWN_SECONDS * 1000
++  ) {
++    const seconds = Math.ceil(
++      (OTP_RESEND_COOLDOWN_SECONDS * 1000 - (now.getTime() - new Date(user.emailOtpLastSentAt).getTime())) / 1000
++    );
++    const error = new Error(`Please wait ${seconds} seconds before requesting a new OTP.`);
++    error.statusCode = 429;
++    throw error;
++  }
++
++  if (
++    !user.emailOtpFirstRequestAt ||
++    now.getTime() - new Date(user.emailOtpFirstRequestAt).getTime() > 60 * 60 * 1000
++  ) {
++    user.emailOtpFirstRequestAt = now;
++    user.emailOtpRequestCount = 0;
++  }
++
++  if (user.emailOtpRequestCount >= OTP_MAX_REQUESTS_PER_HOUR) {
++    const error = new Error('OTP request limit reached. Please try again after 1 hour.');
++    error.statusCode = 429;
++    throw error;
++  }
++
++  const otp = generateOtpCode();
++  user.emailOtpHash = hashOtpCode(otp);
++  user.emailOtpExpire = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
++  user.emailOtpAttempts = 0;
++  user.emailOtpLastSentAt = now;
++  user.emailOtpRequestCount += 1;
++
++  await user.save();
++  await sendVerificationOtpEmail(user, otp);
++
++  return getOtpCooldownMeta(user);
++};
++
++const sanitizeUser = (user) => ({
++  _id: user._id,
++  name: user.name,
++  email: user.email,
++  role: user.role,
++  phone: user.phone,
++  address: user.address,
++  avatar: user.avatar,
++  isVerified: user.isVerified,
++});
+ 
+-// @desc    Register user
+-// @route   POST /api/auth/register
+-// @access  Public
+ const register = asyncHandler(async (req, res) => {
+   const { name, email, password } = req.body;
+ 
+-  const userExists = await User.findOne({ email });
+-  if (userExists) {
++  if (!name || !email || !password) {
++    res.status(400);
++    throw new Error('Please provide name, email and password');
++  }
++
++  const normalizedEmail = email.toLowerCase().trim();
++  let user = await User.findOne({ email: normalizedEmail }).select('+emailOtpHash +password');
++
++  if (user && user.isVerified) {
+     res.status(400);
+     throw new Error('User already exists with this email');
+   }
+ 
+-  const user = await User.create({ name, email, password });
++  if (!user) {
++    user = new User({ name, email: normalizedEmail, password, isVerified: false });
++  } else {
++    user.name = name;
++    user.password = password;
++    user.isVerified = false;
++    user.isBlocked = false;
++  }
++
++  const otpMeta = await prepareAndSendOtp(user, { force: true });
++
++  res.status(201).json({
++    success: true,
++    message: 'Registration created. Please verify your email with the OTP sent to your inbox.',
++    verificationRequired: true,
++    email: user.email,
++    otp: {
++      expiresAt: otpMeta.expiresAt,
++      resendAvailableAt: otpMeta.resendAvailableAt,
++      cooldownSeconds: otpMeta.cooldownSeconds,
++    },
++  });
++});
++
++const verifyEmailOtp = asyncHandler(async (req, res) => {
++  const { email, otp } = req.body;
++
++  if (!email || !otp) {
++    res.status(400);
++    throw new Error('Email and OTP are required');
++  }
++
++  const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+emailOtpHash +password');
++  if (!user) {
++    res.status(404);
++    throw new Error('User not found');
++  }
++
++  if (user.isVerified) {
++    res.status(400);
++    throw new Error('Email is already verified. Please login.');
++  }
++
++  const now = new Date();
++  if (user.emailOtpBlockedUntil && user.emailOtpBlockedUntil > now) {
++    res.status(429);
++    throw new Error(`Verification temporarily blocked. Try again later.`);
++  }
++
++  if (!user.emailOtpHash || !user.emailOtpExpire || user.emailOtpExpire < now) {
++    res.status(400);
++    throw new Error('OTP has expired. Please request a new OTP.');
++  }
++
++  const hashedOtp = hashOtpCode(otp);
++  if (hashedOtp !== user.emailOtpHash) {
++    user.emailOtpAttempts = (user.emailOtpAttempts || 0) + 1;
++
++    if (user.emailOtpAttempts >= OTP_MAX_ATTEMPTS) {
++      user.emailOtpBlockedUntil = new Date(now.getTime() + OTP_BLOCK_MINUTES * 60 * 1000);
++      await user.save();
++      res.status(429);
++      throw new Error('Too many failed OTP attempts. Verification is temporarily blocked.');
++    }
++
++    await user.save();
++    res.status(400);
++    throw new Error(`Invalid OTP. ${OTP_MAX_ATTEMPTS - user.emailOtpAttempts} attempts remaining.`);
++  }
++
++  user.isVerified = true;
++  clearOtpState(user);
++  await user.save();
+ 
+-  // Send welcome email
+   try {
+     await sendEmail({
+       to: user.email,
+@@ -26,7 +219,7 @@ const register = asyncHandler(async (req, res) => {
+       html: `
+         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+           <h2 style="color: #1a237e;">Welcome to Dormez, ${user.name}! 🎉</h2>
+-          <p>Thank you for joining Dormez Mattress Industry. We're thrilled to have you!</p>
++          <p>Your email has been verified successfully and your account is now active.</p>
+           <p>Explore our premium collection of mattresses crafted for the perfect sleep experience.</p>
+           <a href="${process.env.FRONTEND_URL}/products" style="background:#1a237e;color:#fff;padding:10px 20px;text-decoration:none;border-radius:5px;">Shop Now</a>
+           <br><br>
+@@ -38,22 +231,48 @@ const register = asyncHandler(async (req, res) => {
+     console.log('Welcome email failed:', err.message);
+   }
+ 
+-  res.status(201).json({
++  res.json({
+     success: true,
+-    message: 'Registration successful',
+-    user: {
+-      _id: user._id,
+-      name: user.name,
+-      email: user.email,
+-      role: user.role,
+-    },
++    message: 'Email verified successfully',
++    user: sanitizeUser(user),
+     token: generateToken(user._id),
+   });
+ });
+ 
+-// @desc    Login user
+-// @route   POST /api/auth/login
+-// @access  Public
++const resendEmailOtp = asyncHandler(async (req, res) => {
++  const { email } = req.body;
++
++  if (!email) {
++    res.status(400);
++    throw new Error('Email is required');
++  }
++
++  const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+emailOtpHash +password');
++  if (!user) {
++    res.status(404);
++    throw new Error('User not found');
++  }
++
++  if (user.isVerified) {
++    res.status(400);
++    throw new Error('Email is already verified. Please login.');
++  }
++
++  const otpMeta = await prepareAndSendOtp(user);
++
++  res.json({
++    success: true,
++    message: 'A new OTP has been sent to your email address.',
++    verificationRequired: true,
++    email: user.email,
++    otp: {
++      expiresAt: otpMeta.expiresAt,
++      resendAvailableAt: otpMeta.resendAvailableAt,
++      cooldownSeconds: otpMeta.cooldownSeconds,
++    },
++  });
++});
++
+ const login = asyncHandler(async (req, res) => {
+   const { email, password } = req.body;
+ 
+@@ -62,7 +281,7 @@ const login = asyncHandler(async (req, res) => {
+     throw new Error('Please provide email and password');
+   }
+ 
+-  const user = await User.findOne({ email }).select('+password');
++  const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password +emailOtpHash');
+ 
+   if (!user || !(await user.matchPassword(password))) {
+     res.status(401);
+@@ -74,35 +293,32 @@ const login = asyncHandler(async (req, res) => {
+     throw new Error('Your account has been blocked. Contact support.');
+   }
+ 
++  if (!user.isVerified) {
++    res.status(403);
++    res.json({
++      success: false,
++      requiresVerification: true,
++      email: user.email,
++      message: 'Please verify your email with OTP before logging in.',
++    });
++    return;
++  }
++
+   res.json({
+     success: true,
+-    user: {
+-      _id: user._id,
+-      name: user.name,
+-      email: user.email,
+-      role: user.role,
+-      phone: user.phone,
+-      address: user.address,
+-      avatar: user.avatar,
+-    },
++    user: sanitizeUser(user),
+     token: generateToken(user._id),
+   });
+ });
+ 
+-// @desc    Get logged in user profile
+-// @route   GET /api/auth/me
+-// @access  Private
+ const getMe = asyncHandler(async (req, res) => {
+   const user = await User.findById(req.user._id);
+   res.json({ success: true, user });
+ });
+ 
+-// @desc    Forgot password - send reset email
+-// @route   POST /api/auth/forgot-password
+-// @access  Public
+ const forgotPassword = asyncHandler(async (req, res) => {
+   const { email } = req.body;
+-  const user = await User.findOne({ email });
++  const user = await User.findOne({ email: email.toLowerCase().trim() });
+ 
+   if (!user) {
+     res.status(404);
+@@ -111,7 +327,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
+ 
+   const resetToken = crypto.randomBytes(32).toString('hex');
+   user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+-  user.resetPasswordExpire = Date.now() + 15 * 60 * 1000; // 15 mins
++  user.resetPasswordExpire = Date.now() + 15 * 60 * 1000;
+   await user.save();
+ 
+   const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+@@ -133,16 +349,13 @@ const forgotPassword = asyncHandler(async (req, res) => {
+   res.json({ success: true, message: 'Reset email sent successfully' });
+ });
+ 
+-// @desc    Reset password
+-// @route   PUT /api/auth/reset-password/:token
+-// @access  Public
+ const resetPassword = asyncHandler(async (req, res) => {
+   const hashedToken = crypto.createHash('sha256').update(req.params.token).digest('hex');
+ 
+   const user = await User.findOne({
+     resetPasswordToken: hashedToken,
+     resetPasswordExpire: { $gt: Date.now() },
+-  });
++  }).select('+password');
+ 
+   if (!user) {
+     res.status(400);
+@@ -157,4 +370,12 @@ const resetPassword = asyncHandler(async (req, res) => {
+   res.json({ success: true, message: 'Password reset successful', token: generateToken(user._id) });
+ });
+ 
+-module.exports = { register, login, getMe, forgotPassword, resetPassword };
++module.exports = {
++  register,
++  verifyEmailOtp,
++  resendEmailOtp,
++  login,
++  getMe,
++  forgotPassword,
++  resetPassword,
++};
+diff --git a/backend/controllers/orderController.js b/backend/controllers/orderController.js
+index ec95a5d..7d7a9d4 100644
+--- a/backend/controllers/orderController.js
++++ b/backend/controllers/orderController.js
+@@ -3,10 +3,8 @@ const Order = require('../models/Order');
+ const Product = require('../models/Product');
+ const Cart = require('../models/Cart');
+ const sendEmail = require('../utils/sendEmail');
++const { attachReturnMetadataToOrders } = require('../utils/returnUtils');
+ 
+-// @desc    Create new order
+-// @route   POST /api/orders
+-// @access  Private
+ const createOrder = asyncHandler(async (req, res) => {
+   const { products, shippingAddress, paymentMethod, couponCode, couponDiscount, subtotal, shippingCharge, totalAmount } = req.body;
+ 
+@@ -15,25 +13,35 @@ const createOrder = asyncHandler(async (req, res) => {
+     throw new Error('No products in order');
+   }
+ 
+-  // Validate stock and deduct
++  const preparedProducts = [];
++
+   for (const item of products) {
+     const product = await Product.findById(item.productId);
+-    if (!product) { res.status(404); throw new Error(`Product not found: ${item.productId}`); }
++    if (!product) {
++      res.status(404);
++      throw new Error(`Product not found: ${item.productId}`);
++    }
+     if (product.stock < item.quantity) {
+       res.status(400);
+       throw new Error(`Insufficient stock for ${product.name}`);
+     }
++
+     product.stock -= item.quantity;
+     await product.save();
++
++    preparedProducts.push({
++      ...item,
++      isReturnable: product.isReturnable,
++      returnWindowDays: product.returnWindowDays || 7,
++    });
+   }
+ 
+-  // Estimate delivery date (5-7 days)
+   const estimatedDelivery = new Date();
+   estimatedDelivery.setDate(estimatedDelivery.getDate() + 7);
+ 
+   const order = await Order.create({
+     userId: req.user._id,
+-    products,
++    products: preparedProducts,
+     shippingAddress,
+     paymentMethod: paymentMethod || 'razorpay',
+     couponCode,
+@@ -45,14 +53,15 @@ const createOrder = asyncHandler(async (req, res) => {
+     statusHistory: [{ status: 'Order Placed', timestamp: new Date() }],
+   });
+ 
+-  // Clear cart after order
+   await Cart.findOneAndUpdate({ userId: req.user._id }, { items: [] });
+ 
+-  // Send order confirmation email
+   try {
+-    const productRows = products.map(p =>
+-      `<tr><td>${p.name}</td><td>${p.size || '-'}</td><td>${p.quantity}</td><td>₹${p.price}</td></tr>`
+-    ).join('');
++    const productRows = preparedProducts
++      .map(
++        (p) =>
++          `<tr><td>${p.name}</td><td>${p.size || '-'}</td><td>${p.quantity}</td><td>₹${p.price}</td></tr>`
++      )
++      .join('');
+ 
+     await sendEmail({
+       to: req.user.email,
+@@ -69,7 +78,6 @@ const createOrder = asyncHandler(async (req, res) => {
+             <p><strong>Order ID:</strong> ${order._id}</p>
+             <p><strong>Order Date:</strong> ${new Date().toLocaleDateString('en-IN')}</p>
+             <p><strong>Estimated Delivery:</strong> ${estimatedDelivery.toLocaleDateString('en-IN')}</p>
+-            
+             <table style="width:100%;border-collapse:collapse;margin:15px 0;">
+               <thead>
+                 <tr style="background:#1a237e;color:white;">
+@@ -79,30 +87,22 @@ const createOrder = asyncHandler(async (req, res) => {
+                   <th style="padding:8px;">Price</th>
+                 </tr>
+               </thead>
+-              <tbody>
+-                ${productRows}
+-              </tbody>
++              <tbody>${productRows}</tbody>
+             </table>
+-            
+             <div style="text-align:right;margin-top:10px;">
+               <p><strong>Subtotal:</strong> ₹${subtotal}</p>
+               ${couponDiscount > 0 ? `<p style="color:green;"><strong>Coupon Discount:</strong> -₹${couponDiscount}</p>` : ''}
+               <p><strong>Shipping:</strong> ₹${shippingCharge || 0}</p>
+               <p style="font-size:18px;"><strong>Total: ₹${totalAmount}</strong></p>
+             </div>
+-            
+             <div style="margin-top:15px;background:white;padding:15px;border-radius:5px;">
+               <h4>Delivery Address:</h4>
+               <p>${shippingAddress.street}, ${shippingAddress.city}, ${shippingAddress.state} - ${shippingAddress.pincode}</p>
+             </div>
+-            
+             <div style="margin-top:20px;text-align:center;">
+               <a href="${process.env.FRONTEND_URL}/orders/${order._id}" style="background:#1a237e;color:#fff;padding:10px 25px;text-decoration:none;border-radius:5px;">Track Order</a>
+             </div>
+           </div>
+-          <div style="background:#1a237e;color:white;padding:15px;text-align:center;border-radius:0 0 8px 8px;">
+-            <p>Sweet Dreams with Dormez! 🌙</p>
+-          </div>
+         </div>
+       `,
+     });
+@@ -110,36 +110,32 @@ const createOrder = asyncHandler(async (req, res) => {
+     console.log('Order email failed:', err.message);
+   }
+ 
+-  res.status(201).json({ success: true, order });
++  const [orderWithMeta] = await attachReturnMetadataToOrders([order]);
++  res.status(201).json({ success: true, order: orderWithMeta });
+ });
+ 
+-// @desc    Get logged in user orders
+-// @route   GET /api/orders/my
+-// @access  Private
+ const getMyOrders = asyncHandler(async (req, res) => {
+   const orders = await Order.find({ userId: req.user._id }).sort({ createdAt: -1 });
+-  res.json({ success: true, orders });
++  const enrichedOrders = await attachReturnMetadataToOrders(orders);
++  res.json({ success: true, orders: enrichedOrders });
+ });
+ 
+-// @desc    Get order by ID
+-// @route   GET /api/orders/:id
+-// @access  Private
+ const getOrderById = asyncHandler(async (req, res) => {
+   const order = await Order.findById(req.params.id).populate('userId', 'name email phone');
+-  if (!order) { res.status(404); throw new Error('Order not found'); }
++  if (!order) {
++    res.status(404);
++    throw new Error('Order not found');
++  }
+ 
+-  // Check ownership or admin
+   if (order.userId._id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+     res.status(403);
+     throw new Error('Not authorized to view this order');
+   }
+ 
+-  res.json({ success: true, order });
++  const [enrichedOrder] = await attachReturnMetadataToOrders([order]);
++  res.json({ success: true, order: enrichedOrder });
+ });
+ 
+-// @desc    Get all orders (Admin)
+-// @route   GET /api/orders
+-// @access  Admin
+ const getAllOrders = asyncHandler(async (req, res) => {
+   const page = parseInt(req.query.page) || 1;
+   const limit = parseInt(req.query.limit) || 10;
+@@ -157,17 +153,18 @@ const getAllOrders = asyncHandler(async (req, res) => {
+     .skip(skip)
+     .limit(limit);
+ 
+-  res.json({ success: true, orders, total, page, pages: Math.ceil(total / limit) });
++  const enrichedOrders = await attachReturnMetadataToOrders(orders);
++  res.json({ success: true, orders: enrichedOrders, total, page, pages: Math.ceil(total / limit) });
+ });
+ 
+-// @desc    Update order status (Admin)
+-// @route   PUT /api/orders/:id/status
+-// @access  Admin
+ const updateOrderStatus = asyncHandler(async (req, res) => {
+   const { orderStatus } = req.body;
+   const order = await Order.findById(req.params.id).populate('userId', 'name email');
+ 
+-  if (!order) { res.status(404); throw new Error('Order not found'); }
++  if (!order) {
++    res.status(404);
++    throw new Error('Order not found');
++  }
+ 
+   order.orderStatus = orderStatus;
+   if (orderStatus === 'Delivered') {
+@@ -177,7 +174,6 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
+ 
+   await order.save();
+ 
+-  // Send status update email
+   try {
+     await sendEmail({
+       to: order.userId.email,
+@@ -187,9 +183,7 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
+           <h2 style="color:#1a237e;">🛏️ Dormez Mattress - Order Update</h2>
+           <p>Dear ${order.userId.name},</p>
+           <p>Your order <strong>#${order._id}</strong> status has been updated to:</p>
+-          <div style="background:#1a237e;color:white;padding:15px;text-align:center;border-radius:8px;font-size:18px;">
+-            ${orderStatus}
+-          </div>
++          <div style="background:#1a237e;color:white;padding:15px;text-align:center;border-radius:8px;font-size:18px;">${orderStatus}</div>
+           <br>
+           <a href="${process.env.FRONTEND_URL}/orders/${order._id}" style="background:#1a237e;color:#fff;padding:10px 25px;text-decoration:none;border-radius:5px;">View Order</a>
+         </div>
+@@ -199,22 +193,22 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
+     console.log('Status email failed:', err.message);
+   }
+ 
+-  res.json({ success: true, order });
++  const [enrichedOrder] = await attachReturnMetadataToOrders([order]);
++  res.json({ success: true, order: enrichedOrder });
+ });
+ 
+-// @desc    Cancel order
+-// @route   PUT /api/orders/:id/cancel
+-// @access  Private
+ const cancelOrder = asyncHandler(async (req, res) => {
+   const order = await Order.findById(req.params.id);
+-  if (!order) { res.status(404); throw new Error('Order not found'); }
++  if (!order) {
++    res.status(404);
++    throw new Error('Order not found');
++  }
+ 
+   if (['Shipped', 'Out for Delivery', 'Delivered'].includes(order.orderStatus)) {
+     res.status(400);
+     throw new Error('Cannot cancel order at this stage');
+   }
+ 
+-  // Restore stock
+   for (const item of order.products) {
+     await Product.findByIdAndUpdate(item.productId, { $inc: { stock: item.quantity } });
+   }
+@@ -222,7 +216,8 @@ const cancelOrder = asyncHandler(async (req, res) => {
+   order.orderStatus = 'Cancelled';
+   await order.save();
+ 
+-  res.json({ success: true, message: 'Order cancelled successfully', order });
++  const [enrichedOrder] = await attachReturnMetadataToOrders([order]);
++  res.json({ success: true, message: 'Order cancelled successfully', order: enrichedOrder });
+ });
+ 
+ module.exports = { createOrder, getMyOrders, getOrderById, getAllOrders, updateOrderStatus, cancelOrder };
+diff --git a/backend/controllers/productController.js b/backend/controllers/productController.js
+index 4292187..72ba3ab 100644
+--- a/backend/controllers/productController.js
++++ b/backend/controllers/productController.js
+@@ -3,15 +3,25 @@ const Product = require('../models/Product');
+ const cloudinary = require('../config/cloudinary');
+ const Review = require('../models/Review');
+ 
+-// @desc    Get all products with filters, search, pagination
+-// @route   GET /api/products
+-// @access  Public
++const normalizeArrayInput = (value, separator = ',') => {
++  if (!value) return [];
++  if (Array.isArray(value)) return value.filter(Boolean).map((item) => String(item).trim()).filter(Boolean);
++  return String(value)
++    .split(separator)
++    .map((item) => item.trim())
++    .filter(Boolean);
++};
++
++const toBoolean = (value, defaultValue = false) => {
++  if (typeof value === 'boolean') return value;
++  if (typeof value === 'string') return value === 'true';
++  return defaultValue;
++};
++
+ const getProducts = asyncHandler(async (req, res) => {
+   const { keyword, category, size, minPrice, maxPrice, sort, page, limit } = req.query;
+-
+   const query = {};
+ 
+-  // Search
+   if (keyword) {
+     query.$or = [
+       { name: { $regex: keyword, $options: 'i' } },
+@@ -20,67 +30,61 @@ const getProducts = asyncHandler(async (req, res) => {
+     ];
+   }
+ 
+-  // Filter by category
+   if (category) query.category = category;
+-
+-  // Filter by size
+   if (size) query.size = size;
+ 
+-  // Filter by price range
+   if (minPrice || maxPrice) {
+     query.finalPrice = {};
+     if (minPrice) query.finalPrice.$gte = Number(minPrice);
+     if (maxPrice) query.finalPrice.$lte = Number(maxPrice);
+   }
+ 
+-  // Sorting
+   let sortOption = { createdAt: -1 };
+   if (sort === 'price-asc') sortOption = { finalPrice: 1 };
+   else if (sort === 'price-desc') sortOption = { finalPrice: -1 };
+   else if (sort === 'rating') sortOption = { rating: -1 };
+   else if (sort === 'newest') sortOption = { createdAt: -1 };
+ 
+-  const pageNum = parseInt(page) || 1;
+-  const limitNum = parseInt(limit) || 12;
++  const pageNum = parseInt(page, 10) || 1;
++  const limitNum = parseInt(limit, 10) || 12;
+   const skip = (pageNum - 1) * limitNum;
+ 
+   const total = await Product.countDocuments(query);
+-  const products = await Product.find(query)
+-    .sort(sortOption)
+-    .skip(skip)
+-    .limit(limitNum);
+-
+-  res.json({
+-    success: true,
+-    products,
+-    total,
+-    page: pageNum,
+-    pages: Math.ceil(total / limitNum),
+-  });
++  const products = await Product.find(query).sort(sortOption).skip(skip).limit(limitNum);
++
++  res.json({ success: true, products, total, page: pageNum, pages: Math.ceil(total / limitNum) });
+ });
+ 
+-// @desc    Get featured products
+-// @route   GET /api/products/featured
+-// @access  Public
+ const getFeaturedProducts = asyncHandler(async (req, res) => {
+   const products = await Product.find({ isFeatured: true }).limit(8);
+   res.json({ success: true, products });
+ });
+ 
+-// @desc    Get single product
+-// @route   GET /api/products/:id
+-// @access  Public
+ const getProductById = asyncHandler(async (req, res) => {
+   const product = await Product.findById(req.params.id);
+-  if (!product) { res.status(404); throw new Error('Product not found'); }
++  if (!product) {
++    res.status(404);
++    throw new Error('Product not found');
++  }
+   res.json({ success: true, product });
+ });
+ 
+-// @desc    Create product
+-// @route   POST /api/products
+-// @access  Admin
+ const createProduct = asyncHandler(async (req, res) => {
+-  const { name, category, size, thickness, price, discount, stock, description, features, tags, isFeatured } = req.body;
++  const {
++    name,
++    category,
++    size,
++    thickness,
++    price,
++    discount,
++    stock,
++    description,
++    features,
++    tags,
++    isFeatured,
++    isReturnable,
++    returnWindowDays,
++  } = req.body;
+ 
+   const images = [];
+   if (req.files && req.files.length > 0) {
+@@ -94,27 +98,42 @@ const createProduct = asyncHandler(async (req, res) => {
+   }
+ 
+   const product = await Product.create({
+-    name, category, size, thickness, price,
+-    discount: discount || 0, stock, description,
+-    features: features ? (Array.isArray(features) ? features : features.split(',')) : [],
+-    tags: tags ? (Array.isArray(tags) ? tags : tags.split(',')) : [],
+-    isFeatured: isFeatured || false,
++    name,
++    category,
++    size,
++    thickness,
++    price: Number(price),
++    discount: Number(discount || 0),
++    stock: Number(stock),
++    description,
++    features: normalizeArrayInput(features, '\n'),
++    tags: normalizeArrayInput(tags, ','),
++    isFeatured: toBoolean(isFeatured, false),
++    isReturnable: toBoolean(isReturnable, true),
++    returnWindowDays: Number(returnWindowDays || 7),
+     images,
+   });
+ 
+   res.status(201).json({ success: true, product });
+ });
+ 
+-// @desc    Update product
+-// @route   PUT /api/products/:id
+-// @access  Admin
+ const updateProduct = asyncHandler(async (req, res) => {
+   let product = await Product.findById(req.params.id);
+-  if (!product) { res.status(404); throw new Error('Product not found'); }
++  if (!product) {
++    res.status(404);
++    throw new Error('Product not found');
++  }
+ 
+   const updates = { ...req.body };
++  if (updates.features !== undefined) updates.features = normalizeArrayInput(updates.features, '\n');
++  if (updates.tags !== undefined) updates.tags = normalizeArrayInput(updates.tags, ',');
++  if (updates.isFeatured !== undefined) updates.isFeatured = toBoolean(updates.isFeatured, product.isFeatured);
++  if (updates.isReturnable !== undefined) updates.isReturnable = toBoolean(updates.isReturnable, product.isReturnable);
++  if (updates.returnWindowDays !== undefined) updates.returnWindowDays = Number(updates.returnWindowDays || 7);
++  if (updates.price !== undefined) updates.price = Number(updates.price);
++  if (updates.discount !== undefined) updates.discount = Number(updates.discount || 0);
++  if (updates.stock !== undefined) updates.stock = Number(updates.stock);
+ 
+-  // Handle new images
+   if (req.files && req.files.length > 0) {
+     const newImages = [];
+     for (const file of req.files) {
+@@ -128,17 +147,21 @@ const updateProduct = asyncHandler(async (req, res) => {
+   }
+ 
+   product = await Product.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
++  if (product) {
++    product.finalPrice = product.discount > 0 ? Math.round(product.price - (product.price * product.discount) / 100) : product.price;
++    await product.save();
++  }
++
+   res.json({ success: true, product });
+ });
+ 
+-// @desc    Delete product
+-// @route   DELETE /api/products/:id
+-// @access  Admin
+ const deleteProduct = asyncHandler(async (req, res) => {
+   const product = await Product.findById(req.params.id);
+-  if (!product) { res.status(404); throw new Error('Product not found'); }
++  if (!product) {
++    res.status(404);
++    throw new Error('Product not found');
++  }
+ 
+-  // Delete images from cloudinary
+   for (const image of product.images) {
+     if (image.public_id) {
+       await cloudinary.uploader.destroy(image.public_id);
+@@ -151,36 +174,33 @@ const deleteProduct = asyncHandler(async (req, res) => {
+   res.json({ success: true, message: 'Product deleted successfully' });
+ });
+ 
+-// @desc    Update product stock
+-// @route   PUT /api/products/:id/stock
+-// @access  Admin
+ const updateStock = asyncHandler(async (req, res) => {
+-  const product = await Product.findByIdAndUpdate(
+-    req.params.id,
+-    { stock: req.body.stock },
+-    { new: true }
+-  );
+-  if (!product) { res.status(404); throw new Error('Product not found'); }
++  const product = await Product.findByIdAndUpdate(req.params.id, { stock: req.body.stock }, { new: true });
++  if (!product) {
++    res.status(404);
++    throw new Error('Product not found');
++  }
+   res.json({ success: true, product });
+ });
+ 
+-// @desc    Get low stock products
+-// @route   GET /api/products/low-stock
+-// @access  Admin
+ const getLowStockProducts = asyncHandler(async (req, res) => {
+   const products = await Product.find({ stock: { $lte: 5 } }).sort({ stock: 1 });
+   res.json({ success: true, products });
+ });
+ 
+-// @desc    Get product categories count
+-// @route   GET /api/products/categories
+-// @access  Public
+ const getCategories = asyncHandler(async (req, res) => {
+-  const categories = await Product.aggregate([
+-    { $group: { _id: '$category', count: { $sum: 1 } } },
+-    { $sort: { count: -1 } },
+-  ]);
++  const categories = await Product.aggregate([{ $group: { _id: '$category', count: { $sum: 1 } } }, { $sort: { count: -1 } }]);
+   res.json({ success: true, categories });
+ });
+ 
+-module.exports = { getProducts, getFeaturedProducts, getProductById, createProduct, updateProduct, deleteProduct, updateStock, getLowStockProducts, getCategories };
++module.exports = {
++  getProducts,
++  getFeaturedProducts,
++  getProductById,
++  createProduct,
++  updateProduct,
++  deleteProduct,
++  updateStock,
++  getLowStockProducts,
++  getCategories,
++};
+diff --git a/backend/middleware/uploadMiddleware.js b/backend/middleware/uploadMiddleware.js
+index 41f633d..b708a1c 100644
+--- a/backend/middleware/uploadMiddleware.js
++++ b/backend/middleware/uploadMiddleware.js
+@@ -1,9 +1,14 @@
+ const multer = require('multer');
+ const path = require('path');
++const fs = require('fs');
++
++const uploadDir = path.join(process.cwd(), 'uploads');
++if (!fs.existsSync(uploadDir)) {
++  fs.mkdirSync(uploadDir, { recursive: true });
++}
+ 
+-// Local storage (fallback)
+ const storage = multer.diskStorage({
+-  destination: (req, file, cb) => cb(null, 'uploads/'),
++  destination: (req, file, cb) => cb(null, uploadDir),
+   filename: (req, file, cb) => {
+     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+     cb(null, `dormez-${uniqueSuffix}${path.extname(file.originalname)}`);
+@@ -23,7 +28,7 @@ const fileFilter = (req, file, cb) => {
+ 
+ const upload = multer({
+   storage,
+-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
++  limits: { fileSize: 5 * 1024 * 1024 },
+   fileFilter,
+ });
+ 
+diff --git a/backend/models/Order.js b/backend/models/Order.js
+index 0c85d9e..6dc1dfc 100644
+--- a/backend/models/Order.js
++++ b/backend/models/Order.js
+@@ -23,6 +23,14 @@ const orderSchema = new mongoose.Schema(
+           min: 1,
+         },
+         size: String,
++        isReturnable: {
++          type: Boolean,
++          default: true,
++        },
++        returnWindowDays: {
++          type: Number,
++          default: 7,
++        },
+       },
+     ],
+     shippingAddress: {
+@@ -74,7 +82,6 @@ const orderSchema = new mongoose.Schema(
+   { timestamps: true }
+ );
+ 
+-// Auto-set statusHistory on status change
+ orderSchema.pre('save', function (next) {
+   if (this.isModified('orderStatus')) {
+     this.statusHistory.push({
+diff --git a/backend/models/Product.js b/backend/models/Product.js
+index a41c3d8..b186121 100644
+--- a/backend/models/Product.js
++++ b/backend/models/Product.js
+@@ -64,12 +64,21 @@ const productSchema = new mongoose.Schema(
+       type: Boolean,
+       default: false,
+     },
++    isReturnable: {
++      type: Boolean,
++      default: true,
++    },
++    returnWindowDays: {
++      type: Number,
++      default: 7,
++      min: 1,
++      max: 30,
++    },
+     tags: [String],
+   },
+   { timestamps: true }
+ );
+ 
+-// Auto-calculate finalPrice before save
+ productSchema.pre('save', function (next) {
+   if (this.discount > 0) {
+     this.finalPrice = Math.round(this.price - (this.price * this.discount) / 100);
+@@ -79,7 +88,6 @@ productSchema.pre('save', function (next) {
+   next();
+ });
+ 
+-// Virtual for low stock alert
+ productSchema.virtual('isLowStock').get(function () {
+   return this.stock <= 5;
+ });
+diff --git a/backend/models/User.js b/backend/models/User.js
+index 02c4d83..85fb1f9 100644
+--- a/backend/models/User.js
++++ b/backend/models/User.js
+@@ -31,6 +31,10 @@ const userSchema = new mongoose.Schema(
+       type: Boolean,
+       default: false,
+     },
++    isVerified: {
++      type: Boolean,
++      default: false,
++    },
+     phone: {
+       type: String,
+       default: '',
+@@ -46,13 +50,28 @@ const userSchema = new mongoose.Schema(
+       public_id: String,
+       url: { type: String, default: 'https://via.placeholder.com/150' },
+     },
++    emailOtpHash: {
++      type: String,
++      select: false,
++    },
++    emailOtpExpire: Date,
++    emailOtpAttempts: {
++      type: Number,
++      default: 0,
++    },
++    emailOtpRequestCount: {
++      type: Number,
++      default: 0,
++    },
++    emailOtpFirstRequestAt: Date,
++    emailOtpLastSentAt: Date,
++    emailOtpBlockedUntil: Date,
+     resetPasswordToken: String,
+     resetPasswordExpire: Date,
+   },
+   { timestamps: true }
+ );
+ 
+-// Hash password before saving
+ userSchema.pre('save', async function (next) {
+   if (!this.isModified('password')) return next();
+   const salt = await bcrypt.genSalt(10);
+@@ -60,9 +79,8 @@ userSchema.pre('save', async function (next) {
+   next();
+ });
+ 
+-// Match password
+ userSchema.methods.matchPassword = async function (enteredPassword) {
+-  return await bcrypt.compare(enteredPassword, this.password);
++  return bcrypt.compare(enteredPassword, this.password);
+ };
+ 
+ module.exports = mongoose.model('User', userSchema);
+diff --git a/backend/routes/adminRoutes.js b/backend/routes/adminRoutes.js
+index e0a436a..b146cb5 100644
+--- a/backend/routes/adminRoutes.js
++++ b/backend/routes/adminRoutes.js
+@@ -2,10 +2,13 @@ const express = require('express');
+ const router = express.Router();
+ const { getDashboard } = require('../controllers/adminController');
+ const { getSalesAnalytics } = require('../controllers/analyticsController');
++const { getAllReturns, updateReturnStatus } = require('../controllers/returnController');
+ const { protect } = require('../middleware/authMiddleware');
+ const { adminOnly } = require('../middleware/adminMiddleware');
+ 
+ router.get('/dashboard', protect, adminOnly, getDashboard);
+ router.get('/analytics', protect, adminOnly, getSalesAnalytics);
++router.get('/returns', protect, adminOnly, getAllReturns);
++router.put('/returns/:id/status', protect, adminOnly, updateReturnStatus);
+ 
+ module.exports = router;
+diff --git a/backend/routes/authRoutes.js b/backend/routes/authRoutes.js
+index 43c6cc6..626f35c 100644
+--- a/backend/routes/authRoutes.js
++++ b/backend/routes/authRoutes.js
+@@ -1,9 +1,19 @@
+ const express = require('express');
+ const router = express.Router();
+-const { register, login, getMe, forgotPassword, resetPassword } = require('../controllers/authController');
++const {
++  register,
++  verifyEmailOtp,
++  resendEmailOtp,
++  login,
++  getMe,
++  forgotPassword,
++  resetPassword,
++} = require('../controllers/authController');
+ const { protect } = require('../middleware/authMiddleware');
+ 
+ router.post('/register', register);
++router.post('/verify-email-otp', verifyEmailOtp);
++router.post('/resend-email-otp', resendEmailOtp);
+ router.post('/login', login);
+ router.get('/me', protect, getMe);
+ router.post('/forgot-password', forgotPassword);
+diff --git a/backend/routes/orderRoutes.js b/backend/routes/orderRoutes.js
+index 0c4591e..19e2995 100644
+--- a/backend/routes/orderRoutes.js
++++ b/backend/routes/orderRoutes.js
+@@ -1,11 +1,15 @@
+ const express = require('express');
+ const router = express.Router();
+ const { createOrder, getMyOrders, getOrderById, getAllOrders, updateOrderStatus, cancelOrder } = require('../controllers/orderController');
++const { createReturnRequest, getMyReturns } = require('../controllers/returnController');
+ const { protect } = require('../middleware/authMiddleware');
+ const { adminOnly } = require('../middleware/adminMiddleware');
++const upload = require('../middleware/uploadMiddleware');
+ 
+ router.post('/', protect, createOrder);
+ router.get('/my', protect, getMyOrders);
++router.get('/returns/my', protect, getMyReturns);
++router.post('/:id/returns', protect, upload.array('images', 3), createReturnRequest);
+ router.get('/', protect, adminOnly, getAllOrders);
+ router.get('/:id', protect, getOrderById);
+ router.put('/:id/status', protect, adminOnly, updateOrderStatus);
+diff --git a/frontend/src/pages/admin/Orders/ManageOrders.js b/frontend/src/pages/admin/Orders/ManageOrders.js
+index 99ee3a0..3fa3c42 100644
+--- a/frontend/src/pages/admin/Orders/ManageOrders.js
++++ b/frontend/src/pages/admin/Orders/ManageOrders.js
+@@ -1,53 +1,165 @@
+-import React, { useEffect, useState } from 'react';
++import React, { useEffect, useMemo, useState } from 'react';
+ import {
+-  Box, Typography, Table, TableBody, TableCell, TableContainer,
+-  TableHead, TableRow, Paper, Chip, Select, MenuItem, FormControl,
+-  TextField, InputAdornment, IconButton, Tooltip
++  Box,
++  Button,
++  Chip,
++  Dialog,
++  DialogActions,
++  DialogContent,
++  DialogTitle,
++  FormControl,
++  Grid,
++  InputLabel,
++  MenuItem,
++  Paper,
++  Select,
++  Table,
++  TableBody,
++  TableCell,
++  TableContainer,
++  TableHead,
++  TableRow,
++  TextField,
++  Typography,
+ } from '@mui/material';
+-import { Search, Visibility } from '@mui/icons-material';
++import { Visibility } from '@mui/icons-material';
+ import { useDispatch, useSelector } from 'react-redux';
+ import { useNavigate } from 'react-router-dom';
+-import { fetchAllOrders, updateOrderStatus } from '../../../redux/adminSlice';
++import {
++  fetchAllOrders,
++  fetchReturnRequests,
++  updateOrderStatus,
++  updateReturnRequestStatus,
++} from '../../../redux/adminSlice';
+ import Loader from '../../../components/Loader';
+ import Pagination from '../../../components/Pagination';
+ import { formatPrice } from '../../../utils/formatPrice';
+ 
++const orderStatuses = ['Order Placed', 'Packed', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled'];
++const returnStatuses = [
++  'Requested',
++  'Approved',
++  'Rejected',
++  'Pickup Scheduled',
++  'Picked from customer',
++  'Received at warehouse',
++  'Quality Check Passed',
++  'Quality Check Failed',
++  'Refund Initiated',
++  'Replacement Shipped',
++  'Completed',
++];
++
+ const statusColors = {
+-  'Order Placed': 'info', 'Packed': 'warning', 'Shipped': 'secondary',
+-  'Out for Delivery': 'primary', 'Delivered': 'success', 'Cancelled': 'error',
++  Requested: 'warning',
++  Approved: 'info',
++  Rejected: 'error',
++  'Pickup Scheduled': 'secondary',
++  'Picked from customer': 'secondary',
++  'Received at warehouse': 'secondary',
++  'Quality Check Passed': 'success',
++  'Quality Check Failed': 'error',
++  'Refund Initiated': 'success',
++  'Replacement Shipped': 'success',
++  Completed: 'success',
+ };
+ 
+-const statuses = ['Order Placed', 'Packed', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled'];
+-
+ const ManageOrders = () => {
+   const dispatch = useDispatch();
+   const navigate = useNavigate();
+-  const { orders, total, pages, loading } = useSelector((state) => state.admin);
++  const { orders, total, pages, returnRequests, returnTotal, returnPages, loading } = useSelector((state) => state.admin);
++
+   const [page, setPage] = useState(1);
+   const [statusFilter, setStatusFilter] = useState('');
++  const [returnPage, setReturnPage] = useState(1);
++  const [returnStatusFilter, setReturnStatusFilter] = useState('');
++  const [riskFilter, setRiskFilter] = useState('');
++  const [selectedReturn, setSelectedReturn] = useState(null);
++  const [updatePayload, setUpdatePayload] = useState({ status: 'Approved', note: '', scheduledFor: '' });
+ 
+   useEffect(() => {
+     dispatch(fetchAllOrders({ page, limit: 10, ...(statusFilter && { status: statusFilter }) }));
+-  }, [dispatch, page, statusFilter]);
++    dispatch(
++      fetchReturnRequests({
++        page: returnPage,
++        limit: 10,
++        ...(returnStatusFilter && { status: returnStatusFilter }),
++        ...(riskFilter && { risk: riskFilter }),
++      })
++    );
++  }, [dispatch, page, statusFilter, returnPage, returnStatusFilter, riskFilter]);
++
++  const returnSummary = useMemo(() => {
++    const openStatuses = ['Requested', 'Approved', 'Pickup Scheduled'];
++    return {
++      open: returnRequests.filter((item) => openStatuses.includes(item.status)).length,
++      highRisk: returnRequests.filter((item) => item.fraudSignals?.highRisk).length,
++    };
++  }, [returnRequests]);
++
++  const openUpdateDialog = (request) => {
++    setSelectedReturn(request);
++    setUpdatePayload({ status: request.status, note: '', scheduledFor: '' });
++  };
+ 
+-  if (loading) return <Loader />;
++  const handleUpdateReturn = async () => {
++    if (!selectedReturn) return;
++    const result = await dispatch(
++      updateReturnRequestStatus({
++        id: selectedReturn._id,
++        payload: updatePayload,
++      })
++    );
++    if (result.meta.requestStatus === 'fulfilled') {
++      setSelectedReturn(null);
++      dispatch(
++        fetchReturnRequests({
++          page: returnPage,
++          limit: 10,
++          ...(returnStatusFilter && { status: returnStatusFilter }),
++          ...(riskFilter && { risk: riskFilter }),
++        })
++      );
++    }
++  };
++
++  if (loading && !orders.length) return <Loader />;
+ 
+   return (
+     <Box>
+-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+-        <Typography variant="h5" fontWeight={800}>Manage Orders ({total})</Typography>
+-      </Box>
++      <Typography variant="h5" fontWeight={800} sx={{ mb: 3 }}>Manage Orders & Returns</Typography>
++
++      <Grid container spacing={2} sx={{ mb: 3 }}>
++        <Grid item xs={12} md={4}>
++          <Paper sx={{ p: 2, borderRadius: 3 }}>
++            <Typography variant="body2" color="text.secondary">Total Orders</Typography>
++            <Typography variant="h5" fontWeight={800}>{total}</Typography>
++          </Paper>
++        </Grid>
++        <Grid item xs={12} md={4}>
++          <Paper sx={{ p: 2, borderRadius: 3 }}>
++            <Typography variant="body2" color="text.secondary">Open Returns</Typography>
++            <Typography variant="h5" fontWeight={800}>{returnSummary.open}</Typography>
++          </Paper>
++        </Grid>
++        <Grid item xs={12} md={4}>
++          <Paper sx={{ p: 2, borderRadius: 3 }}>
++            <Typography variant="body2" color="text.secondary">High Risk Returns</Typography>
++            <Typography variant="h5" fontWeight={800}>{returnSummary.highRisk}</Typography>
++          </Paper>
++        </Grid>
++      </Grid>
+ 
+       <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
+-        <FormControl size="small" sx={{ minWidth: 200 }}>
++        <FormControl size="small" sx={{ minWidth: 220 }}>
+           <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} displayEmpty>
+-            <MenuItem value="">All Statuses</MenuItem>
+-            {statuses.map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
++            <MenuItem value="">All Order Statuses</MenuItem>
++            {orderStatuses.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
+           </Select>
+         </FormControl>
+       </Box>
+ 
+-      <TableContainer component={Paper} sx={{ borderRadius: 3 }}>
++      <TableContainer component={Paper} sx={{ borderRadius: 3, mb: 2 }}>
+         <Table>
+           <TableHead>
+             <TableRow sx={{ bgcolor: '#f5f5f5' }}>
+@@ -65,44 +177,29 @@ const ManageOrders = () => {
+             {orders.map((order) => (
+               <TableRow key={order._id} hover>
+                 <TableCell>
+-                  <Typography variant="body2" fontFamily="monospace" fontWeight={600}>
+-                    #{order._id.slice(-8).toUpperCase()}
+-                  </Typography>
++                  <Typography variant="body2" fontFamily="monospace" fontWeight={600}>#{order._id.slice(-8).toUpperCase()}</Typography>
+                 </TableCell>
+                 <TableCell>
+                   <Typography variant="body2" fontWeight={600}>{order.userId?.name}</Typography>
+                   <Typography variant="caption" color="text.secondary">{order.userId?.email}</Typography>
+                 </TableCell>
+                 <TableCell>{new Date(order.createdAt).toLocaleDateString('en-IN')}</TableCell>
++                <TableCell><Typography fontWeight={700} color="primary">{formatPrice(order.totalAmount)}</Typography></TableCell>
+                 <TableCell>
+-                  <Typography fontWeight={700} color="primary">{formatPrice(order.totalAmount)}</Typography>
++                  <Chip label={order.paymentStatus} size="small" color={order.paymentStatus === 'paid' ? 'success' : order.paymentStatus === 'pending' ? 'warning' : 'error'} variant="outlined" />
+                 </TableCell>
+                 <TableCell>
+-                  <Chip label={order.paymentStatus} size="small"
+-                    color={order.paymentStatus === 'paid' ? 'success' : order.paymentStatus === 'pending' ? 'warning' : 'error'}
+-                    variant="outlined"
+-                  />
+-                </TableCell>
+-                <TableCell>
+-                  <Chip label={order.orderStatus} size="small" color={statusColors[order.orderStatus] || 'default'} />
++                  <Chip label={order.orderStatus} size="small" color={order.orderStatus === 'Delivered' ? 'success' : 'primary'} />
+                 </TableCell>
+                 <TableCell>
+                   <FormControl size="small" sx={{ minWidth: 160 }}>
+-                    <Select
+-                      value={order.orderStatus}
+-                      onChange={(e) => dispatch(updateOrderStatus({ id: order._id, orderStatus: e.target.value }))}
+-                      disabled={['Delivered', 'Cancelled'].includes(order.orderStatus)}
+-                    >
+-                      {statuses.map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
++                    <Select value={order.orderStatus} onChange={(e) => dispatch(updateOrderStatus({ id: order._id, orderStatus: e.target.value }))} disabled={['Delivered', 'Cancelled'].includes(order.orderStatus)}>
++                      {orderStatuses.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
+                     </Select>
+                   </FormControl>
+                 </TableCell>
+                 <TableCell>
+-                  <Tooltip title="View Details">
+-                    <IconButton size="small" color="primary" onClick={() => navigate(`/orders/${order._id}`)}>
+-                      <Visibility fontSize="small" />
+-                    </IconButton>
+-                  </Tooltip>
++                  <Button size="small" startIcon={<Visibility />} onClick={() => navigate(`/orders/${order._id}`)}>Open</Button>
+                 </TableCell>
+               </TableRow>
+             ))}
+@@ -110,6 +207,106 @@ const ManageOrders = () => {
+         </Table>
+       </TableContainer>
+       <Pagination page={page} pages={pages} onChange={setPage} />
++
++      <Box sx={{ mt: 5, mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
++        <Typography variant="h6" fontWeight={800}>Return Requests ({returnTotal})</Typography>
++        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
++          <FormControl size="small" sx={{ minWidth: 220 }}>
++            <InputLabel>Status</InputLabel>
++            <Select label="Status" value={returnStatusFilter} onChange={(e) => { setReturnStatusFilter(e.target.value); setReturnPage(1); }}>
++              <MenuItem value="">All Return Statuses</MenuItem>
++              {returnStatuses.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
++            </Select>
++          </FormControl>
++          <FormControl size="small" sx={{ minWidth: 180 }}>
++            <InputLabel>Risk</InputLabel>
++            <Select label="Risk" value={riskFilter} onChange={(e) => { setRiskFilter(e.target.value); setReturnPage(1); }}>
++              <MenuItem value="">All Risk Levels</MenuItem>
++              <MenuItem value="high">High Risk Only</MenuItem>
++            </Select>
++          </FormControl>
++        </Box>
++      </Box>
++
++      <TableContainer component={Paper} sx={{ borderRadius: 3 }}>
++        <Table>
++          <TableHead>
++            <TableRow sx={{ bgcolor: '#f8f9ff' }}>
++              <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
++              <TableCell sx={{ fontWeight: 700 }}>Customer</TableCell>
++              <TableCell sx={{ fontWeight: 700 }}>Reason</TableCell>
++              <TableCell sx={{ fontWeight: 700 }}>Resolution</TableCell>
++              <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
++              <TableCell sx={{ fontWeight: 700 }}>Fraud Check</TableCell>
++              <TableCell sx={{ fontWeight: 700 }}>Proof</TableCell>
++              <TableCell sx={{ fontWeight: 700 }}>Action</TableCell>
++            </TableRow>
++          </TableHead>
++          <TableBody>
++            {returnRequests.map((request) => (
++              <TableRow key={request._id} hover>
++                <TableCell>
++                  <Typography fontWeight={700}>{request.productSnapshot?.name}</Typography>
++                  <Typography variant="caption" color="text.secondary">Order #{request.orderId?._id?.slice?.(-8)?.toUpperCase?.() || ''}</Typography>
++                </TableCell>
++                <TableCell>
++                  <Typography fontWeight={600}>{request.userId?.name}</Typography>
++                  <Typography variant="caption" color="text.secondary">{request.userId?.email}</Typography>
++                </TableCell>
++                <TableCell>{request.reason}</TableCell>
++                <TableCell sx={{ textTransform: 'capitalize' }}>{request.resolutionType}</TableCell>
++                <TableCell>
++                  <Chip label={request.status} size="small" color={statusColors[request.status] || 'default'} />
++                </TableCell>
++                <TableCell>
++                  {request.fraudSignals?.highRisk ? (
++                    <Chip color="error" size="small" label={request.fraudSignals.reason || 'High Risk'} />
++                  ) : (
++                    <Chip color="success" size="small" label="Normal" variant="outlined" />
++                  )}
++                </TableCell>
++                <TableCell>
++                  {request.proofImages?.length ? (
++                    <Typography variant="caption">{request.proofImages.length} image(s)</Typography>
++                  ) : (
++                    <Typography variant="caption" color="text.secondary">No proof</Typography>
++                  )}
++                </TableCell>
++                <TableCell>
++                  <Button size="small" variant="outlined" onClick={() => openUpdateDialog(request)}>Update</Button>
++                </TableCell>
++              </TableRow>
++            ))}
++          </TableBody>
++        </Table>
++      </TableContainer>
++      <Pagination page={returnPage} pages={returnPages} onChange={setReturnPage} />
++
++      <Dialog open={Boolean(selectedReturn)} onClose={() => setSelectedReturn(null)} fullWidth maxWidth="sm">
++        <DialogTitle>Update Return Request</DialogTitle>
++        <DialogContent dividers>
++          <FormControl fullWidth sx={{ mb: 2, mt: 1 }}>
++            <InputLabel>Status</InputLabel>
++            <Select label="Status" value={updatePayload.status} onChange={(e) => setUpdatePayload((prev) => ({ ...prev, status: e.target.value }))}>
++              {returnStatuses.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
++            </Select>
++          </FormControl>
++          <TextField fullWidth multiline rows={3} label="Admin Note" value={updatePayload.note} onChange={(e) => setUpdatePayload((prev) => ({ ...prev, note: e.target.value }))} sx={{ mb: 2 }} />
++          <TextField
++            fullWidth
++            label="Pickup Schedule"
++            type="datetime-local"
++            InputLabelProps={{ shrink: true }}
++            value={updatePayload.scheduledFor}
++            onChange={(e) => setUpdatePayload((prev) => ({ ...prev, scheduledFor: e.target.value }))}
++            helperText="Use this when moving status to Pickup Scheduled."
++          />
++        </DialogContent>
++        <DialogActions>
++          <Button onClick={() => setSelectedReturn(null)}>Cancel</Button>
++          <Button variant="contained" onClick={handleUpdateReturn}>Save Update</Button>
++        </DialogActions>
++      </Dialog>
+     </Box>
+   );
+ };
+diff --git a/frontend/src/pages/admin/Products/AddProduct.js b/frontend/src/pages/admin/Products/AddProduct.js
+index 5882aa3..09b2203 100644
+--- a/frontend/src/pages/admin/Products/AddProduct.js
++++ b/frontend/src/pages/admin/Products/AddProduct.js
+@@ -1,8 +1,21 @@
+ import React, { useState } from 'react';
+ import {
+-  Box, Typography, Card, CardContent, TextField, Button, Grid,
+-  Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel,
+-  CircularProgress, IconButton, Alert
++  Box,
++  Typography,
++  Card,
++  CardContent,
++  TextField,
++  Button,
++  Grid,
++  Select,
++  MenuItem,
++  FormControl,
++  InputLabel,
++  Switch,
++  FormControlLabel,
++  CircularProgress,
++  IconButton,
++  Alert,
+ } from '@mui/material';
+ import { ArrowBack, CloudUpload, Delete } from '@mui/icons-material';
+ import { useDispatch } from 'react-redux';
+@@ -18,8 +31,8 @@ const AddProduct = () => {
+   const [previews, setPreviews] = useState([]);
+ 
+   const [form, setForm] = useState({
+-    name: '', category: '', size: '', thickness: '', price: '',
+-    discount: 0, stock: '', description: '', features: '', tags: '', isFeatured: false,
++    name: '', category: '', size: '', thickness: '', price: '', discount: 0, stock: '', description: '', features: '', tags: '', isFeatured: false,
++    isReturnable: true, returnWindowDays: 7,
+   });
+ 
+   const handleChange = (e) => {
+@@ -30,7 +43,7 @@ const AddProduct = () => {
+   const handleImageChange = (e) => {
+     const files = Array.from(e.target.files);
+     setImages(files);
+-    setPreviews(files.map(file => URL.createObjectURL(file)));
++    setPreviews(files.map((file) => URL.createObjectURL(file)));
+   };
+ 
+   const handleSubmit = async (e) => {
+@@ -39,7 +52,7 @@ const AddProduct = () => {
+     try {
+       const formData = new FormData();
+       Object.entries(form).forEach(([k, v]) => formData.append(k, v));
+-      images.forEach(img => formData.append('images', img));
++      images.forEach((img) => formData.append('images', img));
+ 
+       const result = await dispatch(createProduct(formData));
+       if (result.meta.requestStatus === 'fulfilled') {
+@@ -70,15 +83,12 @@ const AddProduct = () => {
+               <CardContent>
+                 <Typography variant="h6" fontWeight={700} gutterBottom>Product Information</Typography>
+                 <Grid container spacing={2}>
+-                  <Grid item xs={12}>
+-                    <TextField fullWidth label="Product Name" name="name" value={form.name}
+-                      onChange={handleChange} required />
+-                  </Grid>
++                  <Grid item xs={12}><TextField fullWidth label="Product Name" name="name" value={form.name} onChange={handleChange} required /></Grid>
+                   <Grid item xs={6}>
+                     <FormControl fullWidth required>
+                       <InputLabel>Category</InputLabel>
+                       <Select name="category" value={form.category} onChange={handleChange} label="Category">
+-                        {['Luxury', 'Ortho', 'Premium', 'Memory', 'Spring'].map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
++                        {['Luxury', 'Ortho', 'Premium', 'Memory', 'Spring'].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                       </Select>
+                     </FormControl>
+                   </Grid>
+@@ -86,38 +96,23 @@ const AddProduct = () => {
+                     <FormControl fullWidth required>
+                       <InputLabel>Size</InputLabel>
+                       <Select name="size" value={form.size} onChange={handleChange} label="Size">
+-                        {['Single', 'Double', 'Queen', 'King', 'Custom'].map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
++                        {['Single', 'Double', 'Queen', 'King', 'Custom'].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+                       </Select>
+                     </FormControl>
+                   </Grid>
+-                  <Grid item xs={6}>
+-                    <TextField fullWidth label="Thickness (e.g. 6 inch)" name="thickness" value={form.thickness} onChange={handleChange} required />
+-                  </Grid>
+-                  <Grid item xs={3}>
+-                    <TextField fullWidth label="Price (₹)" name="price" type="number" value={form.price} onChange={handleChange} required />
+-                  </Grid>
+-                  <Grid item xs={3}>
+-                    <TextField fullWidth label="Discount (%)" name="discount" type="number" value={form.discount} onChange={handleChange} inputProps={{ min: 0, max: 100 }} />
+-                  </Grid>
+-                  <Grid item xs={6}>
+-                    <TextField fullWidth label="Stock Quantity" name="stock" type="number" value={form.stock} onChange={handleChange} required />
+-                  </Grid>
+-                  <Grid item xs={6}>
+-                    <TextField fullWidth label="Tags (comma separated)" name="tags" value={form.tags} onChange={handleChange} placeholder="comfort,ortho,luxury" />
+-                  </Grid>
+-                  <Grid item xs={12}>
+-                    <TextField fullWidth label="Features (one per line)" name="features" value={form.features}
+-                      onChange={handleChange} multiline rows={3} placeholder="Premium foam&#10;5 year warranty&#10;Easy to clean" />
+-                  </Grid>
++                  <Grid item xs={6}><TextField fullWidth label="Thickness (e.g. 6 inch)" name="thickness" value={form.thickness} onChange={handleChange} required /></Grid>
++                  <Grid item xs={3}><TextField fullWidth label="Price (₹)" name="price" type="number" value={form.price} onChange={handleChange} required /></Grid>
++                  <Grid item xs={3}><TextField fullWidth label="Discount (%)" name="discount" type="number" value={form.discount} onChange={handleChange} inputProps={{ min: 0, max: 100 }} /></Grid>
++                  <Grid item xs={6}><TextField fullWidth label="Stock Quantity" name="stock" type="number" value={form.stock} onChange={handleChange} required /></Grid>
++                  <Grid item xs={6}><TextField fullWidth label="Return Window (days)" name="returnWindowDays" type="number" value={form.returnWindowDays} onChange={handleChange} inputProps={{ min: 1, max: 30 }} disabled={!form.isReturnable} /></Grid>
++                  <Grid item xs={6}><TextField fullWidth label="Tags (comma separated)" name="tags" value={form.tags} onChange={handleChange} placeholder="comfort,ortho,luxury" /></Grid>
++                  <Grid item xs={12}><TextField fullWidth label="Features (one per line)" name="features" value={form.features} onChange={handleChange} multiline rows={3} placeholder="Premium foam&#10;5 year warranty&#10;Easy to clean" /></Grid>
++                  <Grid item xs={12}><TextField fullWidth label="Description" name="description" value={form.description} onChange={handleChange} multiline rows={4} required /></Grid>
+                   <Grid item xs={12}>
+-                    <TextField fullWidth label="Description" name="description" value={form.description}
+-                      onChange={handleChange} multiline rows={4} required />
++                    <FormControlLabel control={<Switch name="isFeatured" checked={form.isFeatured} onChange={handleChange} color="secondary" />} label="Mark as Featured Product" />
+                   </Grid>
+                   <Grid item xs={12}>
+-                    <FormControlLabel
+-                      control={<Switch name="isFeatured" checked={form.isFeatured} onChange={handleChange} color="secondary" />}
+-                      label="Mark as Featured Product"
+-                    />
++                    <FormControlLabel control={<Switch name="isReturnable" checked={form.isReturnable} onChange={handleChange} color="primary" />} label="Product is returnable" />
+                   </Grid>
+                 </Grid>
+               </CardContent>
+@@ -128,45 +123,31 @@ const AddProduct = () => {
+             <Card>
+               <CardContent>
+                 <Typography variant="h6" fontWeight={700} gutterBottom>Product Images</Typography>
+-                <Button
+-                  variant="outlined" fullWidth startIcon={<CloudUpload />}
+-                  component="label" sx={{ mb: 2 }}
+-                >
++                <Button variant="outlined" fullWidth startIcon={<CloudUpload />} component="label" sx={{ mb: 2 }}>
+                   Upload Images
+                   <input type="file" hidden multiple accept="image/*" onChange={handleImageChange} />
+                 </Button>
+                 <Grid container spacing={1}>
+                   {previews.map((preview, i) => (
+-                    <Grid item xs={6} key={i}>
++                    <Grid item xs={6} key={preview}>
+                       <Box sx={{ position: 'relative', borderRadius: 2, overflow: 'hidden', height: 100 }}>
+-                        <img src={preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+-                        <IconButton
+-                          size="small"
+-                          sx={{ position: 'absolute', top: 2, right: 2, bgcolor: 'error.main', color: 'white', '&:hover': { bgcolor: 'error.dark' } }}
+-                          onClick={() => {
+-                            const newImages = images.filter((_, idx) => idx !== i);
+-                            setImages(newImages);
+-                            setPreviews(previews.filter((_, idx) => idx !== i));
+-                          }}
+-                        >
++                        <img src={preview} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
++                        <IconButton size="small" sx={{ position: 'absolute', top: 2, right: 2, bgcolor: 'error.main', color: 'white', '&:hover': { bgcolor: 'error.dark' } }} onClick={() => {
++                          const newImages = images.filter((_, idx) => idx !== i);
++                          setImages(newImages);
++                          setPreviews(previews.filter((_, idx) => idx !== i));
++                        }}>
+                           <Delete fontSize="small" />
+                         </IconButton>
+                       </Box>
+                     </Grid>
+                   ))}
+                 </Grid>
+-                {previews.length === 0 && (
+-                  <Box sx={{ textAlign: 'center', py: 4, border: '2px dashed #e0e0e0', borderRadius: 2 }}>
+-                    <Typography color="text.secondary">Upload up to 5 images</Typography>
+-                  </Box>
+-                )}
++                {previews.length === 0 && <Box sx={{ textAlign: 'center', py: 4, border: '2px dashed #e0e0e0', borderRadius: 2 }}><Typography color="text.secondary">Upload up to 5 images</Typography></Box>}
+               </CardContent>
+             </Card>
+ 
+-            <Button
+-              type="submit" variant="contained" fullWidth size="large"
+-              disabled={loading} sx={{ mt: 2, py: 1.5 }}
+-            >
++            <Button type="submit" variant="contained" fullWidth size="large" disabled={loading} sx={{ mt: 2, py: 1.5 }}>
+               {loading ? <CircularProgress size={24} color="inherit" /> : 'Create Product'}
+             </Button>
+           </Grid>
+diff --git a/frontend/src/pages/admin/Products/EditProduct.js b/frontend/src/pages/admin/Products/EditProduct.js
+index cc141e3..e36b37a 100644
+--- a/frontend/src/pages/admin/Products/EditProduct.js
++++ b/frontend/src/pages/admin/Products/EditProduct.js
+@@ -1,8 +1,20 @@
+ import React, { useEffect, useState } from 'react';
+ import {
+-  Box, Typography, Card, CardContent, TextField, Button, Grid,
+-  Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel,
+-  CircularProgress, Alert
++  Box,
++  Typography,
++  Card,
++  CardContent,
++  TextField,
++  Button,
++  Grid,
++  Select,
++  MenuItem,
++  FormControl,
++  InputLabel,
++  Switch,
++  FormControlLabel,
++  CircularProgress,
++  Alert,
+ } from '@mui/material';
+ import { ArrowBack, Save } from '@mui/icons-material';
+ import { useDispatch, useSelector } from 'react-redux';
+@@ -19,13 +31,11 @@ const EditProduct = () => {
+   const [error, setError] = useState('');
+ 
+   const [form, setForm] = useState({
+-    name: '', category: '', size: '', thickness: '', price: '',
+-    discount: 0, stock: '', description: '', features: '', tags: '', isFeatured: false,
++    name: '', category: '', size: '', thickness: '', price: '', discount: 0, stock: '', description: '', features: '', tags: '', isFeatured: false,
++    isReturnable: true, returnWindowDays: 7,
+   });
+ 
+-  useEffect(() => {
+-    dispatch(fetchProductById(id));
+-  }, [id, dispatch]);
++  useEffect(() => { dispatch(fetchProductById(id)); }, [id, dispatch]);
+ 
+   useEffect(() => {
+     if (product) {
+@@ -41,6 +51,8 @@ const EditProduct = () => {
+         features: Array.isArray(product.features) ? product.features.join('\n') : '',
+         tags: Array.isArray(product.tags) ? product.tags.join(', ') : '',
+         isFeatured: product.isFeatured || false,
++        isReturnable: product.isReturnable !== false,
++        returnWindowDays: product.returnWindowDays || 7,
+       });
+     }
+   }, [product]);
+@@ -84,14 +96,12 @@ const EditProduct = () => {
+         <Card>
+           <CardContent>
+             <Grid container spacing={2}>
+-              <Grid item xs={12}>
+-                <TextField fullWidth label="Product Name" name="name" value={form.name} onChange={handleChange} required />
+-              </Grid>
++              <Grid item xs={12}><TextField fullWidth label="Product Name" name="name" value={form.name} onChange={handleChange} required /></Grid>
+               <Grid item xs={6}>
+                 <FormControl fullWidth required>
+                   <InputLabel>Category</InputLabel>
+                   <Select name="category" value={form.category} onChange={handleChange} label="Category">
+-                    {['Luxury', 'Ortho', 'Premium', 'Memory', 'Spring'].map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
++                    {['Luxury', 'Ortho', 'Premium', 'Memory', 'Spring'].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                   </Select>
+                 </FormControl>
+               </Grid>
+@@ -99,44 +109,24 @@ const EditProduct = () => {
+                 <FormControl fullWidth required>
+                   <InputLabel>Size</InputLabel>
+                   <Select name="size" value={form.size} onChange={handleChange} label="Size">
+-                    {['Single', 'Double', 'Queen', 'King', 'Custom'].map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
++                    {['Single', 'Double', 'Queen', 'King', 'Custom'].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+                   </Select>
+                 </FormControl>
+               </Grid>
+-              <Grid item xs={6}>
+-                <TextField fullWidth label="Thickness" name="thickness" value={form.thickness} onChange={handleChange} required />
+-              </Grid>
+-              <Grid item xs={3}>
+-                <TextField fullWidth label="Price (₹)" name="price" type="number" value={form.price} onChange={handleChange} required />
+-              </Grid>
+-              <Grid item xs={3}>
+-                <TextField fullWidth label="Discount (%)" name="discount" type="number" value={form.discount} onChange={handleChange} />
+-              </Grid>
+-              <Grid item xs={6}>
+-                <TextField fullWidth label="Stock" name="stock" type="number" value={form.stock} onChange={handleChange} required />
+-              </Grid>
+-              <Grid item xs={6}>
+-                <TextField fullWidth label="Tags" name="tags" value={form.tags} onChange={handleChange} />
+-              </Grid>
+-              <Grid item xs={12}>
+-                <TextField fullWidth label="Features (one per line)" name="features" value={form.features} onChange={handleChange} multiline rows={3} />
+-              </Grid>
+-              <Grid item xs={12}>
+-                <TextField fullWidth label="Description" name="description" value={form.description} onChange={handleChange} multiline rows={4} required />
+-              </Grid>
+-              <Grid item xs={12}>
+-                <FormControlLabel
+-                  control={<Switch name="isFeatured" checked={form.isFeatured} onChange={handleChange} color="secondary" />}
+-                  label="Featured Product"
+-                />
+-              </Grid>
++              <Grid item xs={6}><TextField fullWidth label="Thickness" name="thickness" value={form.thickness} onChange={handleChange} required /></Grid>
++              <Grid item xs={3}><TextField fullWidth label="Price (₹)" name="price" type="number" value={form.price} onChange={handleChange} required /></Grid>
++              <Grid item xs={3}><TextField fullWidth label="Discount (%)" name="discount" type="number" value={form.discount} onChange={handleChange} /></Grid>
++              <Grid item xs={6}><TextField fullWidth label="Stock" name="stock" type="number" value={form.stock} onChange={handleChange} required /></Grid>
++              <Grid item xs={6}><TextField fullWidth label="Return Window (days)" name="returnWindowDays" type="number" value={form.returnWindowDays} onChange={handleChange} disabled={!form.isReturnable} inputProps={{ min: 1, max: 30 }} /></Grid>
++              <Grid item xs={6}><TextField fullWidth label="Tags" name="tags" value={form.tags} onChange={handleChange} /></Grid>
++              <Grid item xs={12}><TextField fullWidth label="Features (one per line)" name="features" value={form.features} onChange={handleChange} multiline rows={3} /></Grid>
++              <Grid item xs={12}><TextField fullWidth label="Description" name="description" value={form.description} onChange={handleChange} multiline rows={4} required /></Grid>
++              <Grid item xs={12}><FormControlLabel control={<Switch name="isFeatured" checked={form.isFeatured} onChange={handleChange} color="secondary" />} label="Featured Product" /></Grid>
++              <Grid item xs={12}><FormControlLabel control={<Switch name="isReturnable" checked={form.isReturnable} onChange={handleChange} color="primary" />} label="Product is returnable" /></Grid>
+             </Grid>
+           </CardContent>
+         </Card>
+-        <Button
+-          type="submit" variant="contained" size="large" startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <Save />}
+-          disabled={saving} sx={{ mt: 2, px: 4 }}
+-        >
++        <Button type="submit" variant="contained" size="large" startIcon={saving ? <CircularProgress size={18} color="inherit" /> : <Save />} disabled={saving} sx={{ mt: 2, px: 4 }}>
+           {saving ? 'Saving...' : 'Save Changes'}
+         </Button>
+       </form>
+diff --git a/frontend/src/pages/user/Auth/Login.js b/frontend/src/pages/user/Auth/Login.js
+index 951e906..6bb322a 100644
+--- a/frontend/src/pages/user/Auth/Login.js
++++ b/frontend/src/pages/user/Auth/Login.js
+@@ -1,7 +1,18 @@
+ import React, { useState } from 'react';
+ import {
+-  Box, Container, Card, CardContent, TextField, Button, Typography,
+-  Link, InputAdornment, IconButton, Divider, CircularProgress
++  Alert,
++  Box,
++  Button,
++  Card,
++  CardContent,
++  CircularProgress,
++  Divider,
++  IconButton,
++  InputAdornment,
++  Link,
++  TextField,
++  Typography,
++  Container,
+ } from '@mui/material';
+ import { Email, Lock, Visibility, VisibilityOff, Bedtime } from '@mui/icons-material';
+ import { useDispatch, useSelector } from 'react-redux';
+@@ -11,16 +22,26 @@ import { loginUser } from '../../../redux/authSlice';
+ const Login = () => {
+   const [form, setForm] = useState({ email: '', password: '' });
+   const [showPassword, setShowPassword] = useState(false);
++  const [localMessage, setLocalMessage] = useState('');
+   const dispatch = useDispatch();
+   const navigate = useNavigate();
+   const { loading } = useSelector((state) => state.auth);
+ 
+   const handleSubmit = async (e) => {
+     e.preventDefault();
++    setLocalMessage('');
+     const result = await dispatch(loginUser(form));
+     if (result.meta.requestStatus === 'fulfilled') {
+       const user = result.payload.user;
+       navigate(user.role === 'admin' ? '/admin/dashboard' : '/');
++    } else if (result.payload?.requiresVerification) {
++      setLocalMessage(result.payload.message);
++      navigate('/register', {
++        state: {
++          email: result.payload.email || form.email,
++          verificationRequired: true,
++        },
++      });
+     }
+   };
+ 
+@@ -34,6 +55,7 @@ const Login = () => {
+         </Box>
+         <Card elevation={0} sx={{ border: '1px solid #e0e0e0' }}>
+           <CardContent sx={{ p: 4 }}>
++            {localMessage && <Alert severity="info" sx={{ mb: 2 }}>{localMessage}</Alert>}
+             <form onSubmit={handleSubmit}>
+               <TextField
+                 fullWidth label="Email Address" type="email" value={form.email}
+@@ -61,19 +83,14 @@ const Login = () => {
+                   Forgot Password?
+                 </Link>
+               </Box>
+-              <Button
+-                type="submit" variant="contained" fullWidth size="large"
+-                disabled={loading} sx={{ py: 1.5, fontSize: 16, borderRadius: 2 }}
+-              >
++              <Button type="submit" variant="contained" fullWidth size="large" disabled={loading} sx={{ py: 1.5, fontSize: 16, borderRadius: 2 }}>
+                 {loading ? <CircularProgress size={24} color="inherit" /> : 'Sign In'}
+               </Button>
+             </form>
+             <Divider sx={{ my: 3 }}>OR</Divider>
+             <Typography textAlign="center" variant="body2">
+               Don't have an account?{' '}
+-              <Link component={RouterLink} to="/register" color="primary" fontWeight={600}>
+-                Register Now
+-              </Link>
++              <Link component={RouterLink} to="/register" color="primary" fontWeight={600}>Register Now</Link>
+             </Typography>
+           </CardContent>
+         </Card>
+diff --git a/frontend/src/pages/user/Auth/Register.js b/frontend/src/pages/user/Auth/Register.js
+index 6b32dbc..1d13a0c 100644
+--- a/frontend/src/pages/user/Auth/Register.js
++++ b/frontend/src/pages/user/Auth/Register.js
+@@ -1,20 +1,103 @@
+-import React, { useState } from 'react';
++import React, { useEffect, useMemo, useState } from 'react';
+ import {
+-  Box, Container, Card, CardContent, TextField, Button, Typography,
+-  Link, InputAdornment, IconButton, Divider, CircularProgress
++  Alert,
++  Box,
++  Button,
++  Card,
++  CardContent,
++  CircularProgress,
++  Container,
++  Divider,
++  Grid,
++  InputAdornment,
++  Link,
++  IconButton,
++  TextField,
++  Typography,
+ } from '@mui/material';
+-import { Email, Lock, Person, Visibility, VisibilityOff, Bedtime } from '@mui/icons-material';
++import {
++  AccessTime,
++  Bedtime,
++  Email,
++  Lock,
++  Person,
++  Replay,
++  Security,
++  Visibility,
++  VisibilityOff,
++  VerifiedUser,
++} from '@mui/icons-material';
+ import { useDispatch, useSelector } from 'react-redux';
+-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+-import { registerUser } from '../../../redux/authSlice';
++import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
++import {
++  clearPendingVerification,
++  registerUser,
++  resendEmailOtp,
++  setPendingVerification,
++  verifyEmailOtp,
++} from '../../../redux/authSlice';
+ 
+ const Register = () => {
++  const dispatch = useDispatch();
++  const navigate = useNavigate();
++  const location = useLocation();
++  const { loading, verifyingOtp, resendLoading, pendingVerification, error } = useSelector((state) => state.auth);
++
+   const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '' });
++  const [otp, setOtp] = useState('');
+   const [showPassword, setShowPassword] = useState(false);
+   const [errors, setErrors] = useState({});
+-  const dispatch = useDispatch();
+-  const navigate = useNavigate();
+-  const { loading } = useSelector((state) => state.auth);
++  const [cooldownSeconds, setCooldownSeconds] = useState(0);
++
++  useEffect(() => {
++    if (location.state?.email) {
++      setForm((prev) => ({ ...prev, email: location.state.email }));
++      dispatch(
++        setPendingVerification({
++          email: location.state.email,
++          expiresAt: null,
++          resendAvailableAt: location.state.resendAvailableAt || new Date().toISOString(),
++        })
++      );
++    }
++  }, [location.state, dispatch]);
++
++  useEffect(() => {
++    if (!pendingVerification?.resendAvailableAt) {
++      setCooldownSeconds(0);
++      return;
++    }
++
++    const updateCountdown = () => {
++      const remaining = Math.max(
++        0,
++        Math.ceil((new Date(pendingVerification.resendAvailableAt).getTime() - Date.now()) / 1000)
++      );
++      setCooldownSeconds(remaining);
++    };
++
++    updateCountdown();
++    const interval = setInterval(updateCountdown, 1000);
++    return () => clearInterval(interval);
++  }, [pendingVerification]);
++
++  useEffect(() => {
++    return () => {
++      if (!location.state?.email) {
++        dispatch(clearPendingVerification());
++      }
++    };
++  }, [dispatch, location.state]);
++
++  const isOtpStep = Boolean(pendingVerification?.email);
++
++  const otpExpiryText = useMemo(() => {
++    if (!pendingVerification?.expiresAt) return 'OTP expires automatically after 5 minutes.';
++    return `OTP valid until ${new Date(pendingVerification.expiresAt).toLocaleTimeString('en-IN', {
++      hour: '2-digit',
++      minute: '2-digit',
++    })}.`;
++  }, [pendingVerification]);
+ 
+   const validate = () => {
+     const newErrors = {};
+@@ -26,72 +109,185 @@ const Register = () => {
+     return Object.keys(newErrors).length === 0;
+   };
+ 
+-  const handleSubmit = async (e) => {
++  const handleRegister = async (e) => {
+     e.preventDefault();
+     if (!validate()) return;
+-    const result = await dispatch(registerUser({ name: form.name, email: form.email, password: form.password }));
+-    if (result.meta.requestStatus === 'fulfilled') navigate('/');
++    await dispatch(registerUser({ name: form.name, email: form.email, password: form.password }));
++  };
++
++  const handleVerifyOtp = async (e) => {
++    e.preventDefault();
++    const result = await dispatch(verifyEmailOtp({ email: pendingVerification.email, otp }));
++    if (result.meta.requestStatus === 'fulfilled') {
++      navigate('/');
++    }
++  };
++
++  const handleResendOtp = async () => {
++    if (!pendingVerification?.email) return;
++    await dispatch(resendEmailOtp({ email: pendingVerification.email }));
+   };
+ 
+   return (
+     <Box sx={{ minHeight: '100vh', background: 'linear-gradient(135deg, #e8eaf6 0%, #fce4ec 100%)', display: 'flex', alignItems: 'center', py: 4 }}>
+-      <Container maxWidth="sm">
++      <Container maxWidth="md">
+         <Box sx={{ textAlign: 'center', mb: 3 }}>
+           <Bedtime sx={{ fontSize: 60, color: 'primary.main' }} />
+-          <Typography variant="h4" fontWeight={800} color="primary">Create Account</Typography>
+-          <Typography color="text.secondary">Join Dormez for the best sleep experience 🛏️</Typography>
++          <Typography variant="h4" fontWeight={800} color="primary">
++            {isOtpStep ? 'Verify Your Email' : 'Create Account'}
++          </Typography>
++          <Typography color="text.secondary">
++            {isOtpStep ? 'Register → Generate OTP → Send Email → Verify → Activate Account' : 'Join Dormez for the best sleep experience 🛏️'}
++          </Typography>
+         </Box>
+-        <Card elevation={0} sx={{ border: '1px solid #e0e0e0' }}>
+-          <CardContent sx={{ p: 4 }}>
+-            <form onSubmit={handleSubmit}>
+-              <TextField
+-                fullWidth label="Full Name" value={form.name}
+-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+-                error={!!errors.name} helperText={errors.name}
+-                InputProps={{ startAdornment: <InputAdornment position="start"><Person color="action" /></InputAdornment> }}
+-                sx={{ mb: 2 }} required
+-              />
+-              <TextField
+-                fullWidth label="Email Address" type="email" value={form.email}
+-                onChange={(e) => setForm({ ...form, email: e.target.value })}
+-                error={!!errors.email} helperText={errors.email}
+-                InputProps={{ startAdornment: <InputAdornment position="start"><Email color="action" /></InputAdornment> }}
+-                sx={{ mb: 2 }} required
+-              />
+-              <TextField
+-                fullWidth label="Password" type={showPassword ? 'text' : 'password'} value={form.password}
+-                onChange={(e) => setForm({ ...form, password: e.target.value })}
+-                error={!!errors.password} helperText={errors.password}
+-                InputProps={{
+-                  startAdornment: <InputAdornment position="start"><Lock color="action" /></InputAdornment>,
+-                  endAdornment: (
+-                    <InputAdornment position="end">
+-                      <IconButton onClick={() => setShowPassword(!showPassword)} edge="end">
+-                        {showPassword ? <VisibilityOff /> : <Visibility />}
+-                      </IconButton>
+-                    </InputAdornment>
+-                  ),
+-                }}
+-                sx={{ mb: 2 }} required
+-              />
+-              <TextField
+-                fullWidth label="Confirm Password" type="password" value={form.confirmPassword}
+-                onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
+-                error={!!errors.confirmPassword} helperText={errors.confirmPassword}
+-                InputProps={{ startAdornment: <InputAdornment position="start"><Lock color="action" /></InputAdornment> }}
+-                sx={{ mb: 3 }} required
+-              />
+-              <Button type="submit" variant="contained" fullWidth size="large" disabled={loading} sx={{ py: 1.5, fontSize: 16, borderRadius: 2 }}>
+-                {loading ? <CircularProgress size={24} color="inherit" /> : 'Create Account'}
+-              </Button>
+-            </form>
+-            <Divider sx={{ my: 3 }}>OR</Divider>
+-            <Typography textAlign="center" variant="body2">
+-              Already have an account?{' '}
+-              <Link component={RouterLink} to="/login" color="primary" fontWeight={600}>Sign In</Link>
+-            </Typography>
+-          </CardContent>
+-        </Card>
++
++        <Grid container spacing={3}>
++          <Grid item xs={12} md={7}>
++            <Card elevation={0} sx={{ border: '1px solid #e0e0e0' }}>
++              <CardContent sx={{ p: 4 }}>
++                {!isOtpStep ? (
++                  <form onSubmit={handleRegister}>
++                    <TextField
++                      fullWidth
++                      label="Full Name"
++                      value={form.name}
++                      onChange={(e) => setForm({ ...form, name: e.target.value })}
++                      error={!!errors.name}
++                      helperText={errors.name}
++                      InputProps={{ startAdornment: <InputAdornment position="start"><Person color="action" /></InputAdornment> }}
++                      sx={{ mb: 2 }}
++                      required
++                    />
++                    <TextField
++                      fullWidth
++                      label="Email Address"
++                      type="email"
++                      value={form.email}
++                      onChange={(e) => setForm({ ...form, email: e.target.value })}
++                      error={!!errors.email}
++                      helperText={errors.email}
++                      InputProps={{ startAdornment: <InputAdornment position="start"><Email color="action" /></InputAdornment> }}
++                      sx={{ mb: 2 }}
++                      required
++                    />
++                    <TextField
++                      fullWidth
++                      label="Password"
++                      type={showPassword ? 'text' : 'password'}
++                      value={form.password}
++                      onChange={(e) => setForm({ ...form, password: e.target.value })}
++                      error={!!errors.password}
++                      helperText={errors.password}
++                      InputProps={{
++                        startAdornment: <InputAdornment position="start"><Lock color="action" /></InputAdornment>,
++                        endAdornment: (
++                          <InputAdornment position="end">
++                            <IconButton onClick={() => setShowPassword(!showPassword)} edge="end">
++                              {showPassword ? <VisibilityOff /> : <Visibility />}
++                            </IconButton>
++                          </InputAdornment>
++                        ),
++                      }}
++                      sx={{ mb: 2 }}
++                      required
++                    />
++                    <TextField
++                      fullWidth
++                      label="Confirm Password"
++                      type="password"
++                      value={form.confirmPassword}
++                      onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
++                      error={!!errors.confirmPassword}
++                      helperText={errors.confirmPassword}
++                      InputProps={{ startAdornment: <InputAdornment position="start"><Lock color="action" /></InputAdornment> }}
++                      sx={{ mb: 3 }}
++                      required
++                    />
++                    <Button type="submit" variant="contained" fullWidth size="large" disabled={loading} sx={{ py: 1.5, fontSize: 16, borderRadius: 2 }}>
++                      {loading ? <CircularProgress size={24} color="inherit" /> : 'Create Account & Send OTP'}
++                    </Button>
++                  </form>
++                ) : (
++                  <form onSubmit={handleVerifyOtp}>
++                    <Alert severity="info" sx={{ mb: 3 }}>
++                      We sent a 6-digit OTP to <strong>{pendingVerification.email}</strong>. {otpExpiryText}
++                    </Alert>
++                    {error && <Alert severity="warning" sx={{ mb: 2 }}>{error}</Alert>}
++                    <TextField
++                      fullWidth
++                      label="Enter OTP"
++                      value={otp}
++                      onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
++                      inputProps={{ maxLength: 6, inputMode: 'numeric' }}
++                      placeholder="123456"
++                      InputProps={{ startAdornment: <InputAdornment position="start"><VerifiedUser color="action" /></InputAdornment> }}
++                      sx={{ mb: 2 }}
++                      required
++                    />
++                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3, gap: 2, flexWrap: 'wrap' }}>
++                      <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
++                        <AccessTime fontSize="small" />
++                        Attempts are limited and OTP expires automatically.
++                      </Typography>
++                      <Button
++                        variant="text"
++                        startIcon={<Replay />}
++                        onClick={handleResendOtp}
++                        disabled={cooldownSeconds > 0 || resendLoading}
++                      >
++                        {resendLoading ? 'Sending...' : cooldownSeconds > 0 ? `Resend in ${cooldownSeconds}s` : 'Resend OTP'}
++                      </Button>
++                    </Box>
++                    <Button type="submit" variant="contained" fullWidth size="large" disabled={verifyingOtp || otp.length !== 6} sx={{ py: 1.5, fontSize: 16, borderRadius: 2 }}>
++                      {verifyingOtp ? <CircularProgress size={24} color="inherit" /> : 'Verify OTP & Activate Account'}
++                    </Button>
++                    <Button
++                      type="button"
++                      variant="text"
++                      fullWidth
++                      sx={{ mt: 1 }}
++                      onClick={() => {
++                        dispatch(clearPendingVerification());
++                        setOtp('');
++                      }}
++                    >
++                      Edit registration details
++                    </Button>
++                  </form>
++                )}
++
++                <Divider sx={{ my: 3 }}>OR</Divider>
++                <Typography textAlign="center" variant="body2">
++                  Already have an account?{' '}
++                  <Link component={RouterLink} to="/login" color="primary" fontWeight={600}>Sign In</Link>
++                </Typography>
++              </CardContent>
++            </Card>
++          </Grid>
++
++          <Grid item xs={12} md={5}>
++            <Card elevation={0} sx={{ border: '1px solid #e0e0e0', height: '100%' }}>
++              <CardContent sx={{ p: 4 }}>
++                <Typography variant="h6" fontWeight={700} gutterBottom>
++                  <Security sx={{ mr: 1, verticalAlign: 'middle' }} /> Secure OTP Rules
++                </Typography>
++                <Box sx={{ display: 'grid', gap: 2, mt: 2 }}>
++                  <Alert severity="success">OTP is valid for only 5 minutes.</Alert>
++                  <Alert severity="info">Resend OTP is protected with cooldown to prevent spam.</Alert>
++                  <Alert severity="warning">Repeated wrong attempts temporarily block verification.</Alert>
++                  <Alert severity="info">Dormez stores OTP securely in hashed form, not plain text.</Alert>
++                </Box>
++                <Box sx={{ mt: 3, p: 2, borderRadius: 3, bgcolor: '#f8f9ff' }}>
++                  <Typography fontWeight={700} gutterBottom>How it works</Typography>
++                  <Typography variant="body2" color="text.secondary">1. Register with your details</Typography>
++                  <Typography variant="body2" color="text.secondary">2. Receive OTP on email</Typography>
++                  <Typography variant="body2" color="text.secondary">3. Enter OTP within 5 minutes</Typography>
++                  <Typography variant="body2" color="text.secondary">4. Account gets activated instantly</Typography>
++                </Box>
++              </CardContent>
++            </Card>
++          </Grid>
++        </Grid>
+       </Container>
+     </Box>
+   );
+diff --git a/frontend/src/pages/user/Orders/OrderHistory.js b/frontend/src/pages/user/Orders/OrderHistory.js
+index 0d320ab..78ac598 100644
+--- a/frontend/src/pages/user/Orders/OrderHistory.js
++++ b/frontend/src/pages/user/Orders/OrderHistory.js
+@@ -1,9 +1,18 @@
+ import React, { useEffect } from 'react';
+ import {
+-  Box, Container, Typography, Card, CardContent, Chip, Grid,
+-  Button, Divider, Avatar
++  Box,
++  Button,
++  Card,
++  CardContent,
++  Chip,
++  Container,
++  Divider,
++  Grid,
++  Avatar,
++  Stack,
++  Typography,
+ } from '@mui/material';
+-import { ShoppingBag, ArrowForward, Visibility } from '@mui/icons-material';
++import { Autorenew, ArrowForward, Visibility, ShoppingBag } from '@mui/icons-material';
+ import { useDispatch, useSelector } from 'react-redux';
+ import { useNavigate } from 'react-router-dom';
+ import { fetchMyOrders } from '../../../redux/orderSlice';
+@@ -12,11 +21,11 @@ import { formatPrice } from '../../../utils/formatPrice';
+ 
+ const statusColors = {
+   'Order Placed': 'info',
+-  'Packed': 'warning',
+-  'Shipped': 'secondary',
++  Packed: 'warning',
++  Shipped: 'secondary',
+   'Out for Delivery': 'primary',
+-  'Delivered': 'success',
+-  'Cancelled': 'error',
++  Delivered: 'success',
++  Cancelled: 'error',
+ };
+ 
+ const OrderHistory = () => {
+@@ -24,7 +33,9 @@ const OrderHistory = () => {
+   const navigate = useNavigate();
+   const { orders, loading } = useSelector((state) => state.orders);
+ 
+-  useEffect(() => { dispatch(fetchMyOrders()); }, [dispatch]);
++  useEffect(() => {
++    dispatch(fetchMyOrders());
++  }, [dispatch]);
+ 
+   if (loading) return <Loader message="Loading orders..." />;
+ 
+@@ -44,9 +55,7 @@ const OrderHistory = () => {
+             <Typography variant="h1" mb={2}>📦</Typography>
+             <Typography variant="h5" fontWeight={600} mb={1}>No orders yet</Typography>
+             <Typography color="text.secondary" mb={3}>Start shopping to place your first order!</Typography>
+-            <Button variant="contained" onClick={() => navigate('/products')} endIcon={<ArrowForward />}>
+-              Shop Now
+-            </Button>
++            <Button variant="contained" onClick={() => navigate('/products')} endIcon={<ArrowForward />}>Shop Now</Button>
+           </Box>
+         ) : (
+           orders.map((order) => (
+@@ -57,32 +66,37 @@ const OrderHistory = () => {
+                     <Typography variant="caption" color="text.secondary">Order ID</Typography>
+                     <Typography variant="body2" fontWeight={700} sx={{ fontFamily: 'monospace' }}>#{order._id.slice(-8).toUpperCase()}</Typography>
+                   </Box>
+-                  <Chip
+-                    label={order.orderStatus}
+-                    color={statusColors[order.orderStatus] || 'default'}
+-                    size="small"
+-                    sx={{ fontWeight: 700 }}
+-                  />
++                  <Chip label={order.orderStatus} color={statusColors[order.orderStatus] || 'default'} size="small" sx={{ fontWeight: 700 }} />
+                   <Box sx={{ textAlign: 'right' }}>
+                     <Typography variant="caption" color="text.secondary">Order Date</Typography>
+-                    <Typography variant="body2" fontWeight={600}>
+-                      {new Date(order.createdAt).toLocaleDateString('en-IN')}
+-                    </Typography>
++                    <Typography variant="body2" fontWeight={600}>{new Date(order.createdAt).toLocaleDateString('en-IN')}</Typography>
+                   </Box>
+                 </Box>
+ 
+-                {/* Products */}
+-                <Box sx={{ display: 'flex', gap: 1, mb: 2, overflowX: 'auto' }}>
+-                  {order.products.map((item, i) => (
+-                    <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1, bgcolor: '#f5f5f5', borderRadius: 2, p: 1, flexShrink: 0 }}>
+-                      <Avatar src={item.image} variant="rounded" sx={{ width: 48, height: 48 }}>📦</Avatar>
+-                      <Box>
+-                        <Typography variant="body2" fontWeight={600} noWrap sx={{ maxWidth: 120 }}>{item.name}</Typography>
+-                        <Typography variant="caption" color="text.secondary">Qty: {item.quantity} • {item.size}</Typography>
++                <Grid container spacing={2} sx={{ mb: 1 }}>
++                  {order.products.map((item) => (
++                    <Grid item xs={12} md={6} key={item._id}>
++                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#f5f5f5', borderRadius: 2, p: 1.5, height: '100%' }}>
++                        <Avatar src={item.image} variant="rounded" sx={{ width: 56, height: 56 }}>📦</Avatar>
++                        <Box sx={{ flexGrow: 1 }}>
++                          <Typography variant="body2" fontWeight={700}>{item.name}</Typography>
++                          <Typography variant="caption" color="text.secondary">Qty: {item.quantity} • {item.size}</Typography>
++                          <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
++                            {item.returnMeta?.eligible && (
++                              <Chip size="small" color="success" icon={<Autorenew />} label={item.returnMeta.countdownText} />
++                            )}
++                            {item.returnMeta?.deadlineText && !item.returnMeta?.existingReturn && (
++                              <Chip size="small" variant="outlined" label={`Return till ${item.returnMeta.deadlineText}`} />
++                            )}
++                            {item.returnMeta?.existingReturn && (
++                              <Chip size="small" color="warning" label={`Return: ${item.returnMeta.existingReturn.status}`} />
++                            )}
++                          </Stack>
++                        </Box>
+                       </Box>
+-                    </Box>
++                    </Grid>
+                   ))}
+-                </Box>
++                </Grid>
+ 
+                 <Divider sx={{ mb: 2 }} />
+                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+@@ -103,12 +117,8 @@ const OrderHistory = () => {
+                       </Typography>
+                     </Box>
+                   </Box>
+-                  <Button
+-                    variant="outlined" startIcon={<Visibility />}
+-                    onClick={() => navigate(`/orders/${order._id}`)}
+-                    size="small"
+-                  >
+-                    Track Order
++                  <Button variant="outlined" startIcon={<Visibility />} onClick={() => navigate(`/orders/${order._id}`)} size="small">
++                    Track Order / Return
+                   </Button>
+                 </Box>
+               </CardContent>
+diff --git a/frontend/src/pages/user/Orders/OrderTracking.js b/frontend/src/pages/user/Orders/OrderTracking.js
+index b1776c0..23571bf 100644
+--- a/frontend/src/pages/user/Orders/OrderTracking.js
++++ b/frontend/src/pages/user/Orders/OrderTracking.js
+@@ -1,46 +1,149 @@
+-import React, { useEffect } from 'react';
++import React, { useEffect, useMemo, useState } from 'react';
+ import {
+-  Box, Container, Typography, Card, CardContent, Chip, Grid,
+-  Stepper, Step, StepLabel, Button, Divider, Avatar, Alert
++  Alert,
++  Avatar,
++  Box,
++  Button,
++  Card,
++  CardContent,
++  Chip,
++  Dialog,
++  DialogActions,
++  DialogContent,
++  DialogTitle,
++  Divider,
++  FormControl,
++  Grid,
++  InputLabel,
++  List,
++  ListItem,
++  ListItemText,
++  MenuItem,
++  Select,
++  Stack,
++  Step,
++  StepLabel,
++  Stepper,
++  TextField,
++  Typography,
+ } from '@mui/material';
+-import { ArrowBack, Cancel } from '@mui/icons-material';
++import { ArrowBack, Autorenew, Cancel, CloudUpload } from '@mui/icons-material';
+ import { useDispatch, useSelector } from 'react-redux';
+-import { useParams, useNavigate } from 'react-router-dom';
+-import { fetchOrderById, cancelOrder } from '../../../redux/orderSlice';
++import { useNavigate, useParams } from 'react-router-dom';
++import { cancelOrder, createReturnRequest, fetchOrderById, fetchMyOrders } from '../../../redux/orderSlice';
+ import Loader from '../../../components/Loader';
+ import { formatPrice } from '../../../utils/formatPrice';
+ 
+ const trackingSteps = ['Order Placed', 'Packed', 'Shipped', 'Out for Delivery', 'Delivered'];
++const statusColors = {
++  Requested: 'warning',
++  Approved: 'info',
++  Rejected: 'error',
++  'Pickup Scheduled': 'secondary',
++  'Picked from customer': 'secondary',
++  'Received at warehouse': 'secondary',
++  'Quality Check Passed': 'success',
++  'Quality Check Failed': 'error',
++  'Refund Initiated': 'success',
++  'Replacement Shipped': 'success',
++  Completed: 'success',
++};
++
++const getReturnFlowSteps = (resolutionType) => [
++  'Requested',
++  'Approved',
++  'Pickup Scheduled',
++  'Picked from customer',
++  'Received at warehouse',
++  'Quality Check Passed',
++  resolutionType === 'replacement' ? 'Replacement Shipped' : 'Refund Initiated',
++  'Completed',
++];
+ 
+ const OrderTracking = () => {
+   const { id } = useParams();
+   const dispatch = useDispatch();
+   const navigate = useNavigate();
+-  const { selectedOrder: order, loading } = useSelector((state) => state.orders);
++  const { selectedOrder: order, loading, returnSubmitting } = useSelector((state) => state.orders);
++
++  const [dialogOpen, setDialogOpen] = useState(false);
++  const [selectedItem, setSelectedItem] = useState(null);
++  const [returnForm, setReturnForm] = useState({
++    reason: 'Damaged',
++    resolutionType: 'refund',
++    comments: '',
++    refundMode: 'original_source',
++    accountHolderName: '',
++    bankName: '',
++    accountNumber: '',
++    ifscCode: '',
++  });
++  const [proofImages, setProofImages] = useState([]);
++
++  useEffect(() => {
++    dispatch(fetchOrderById(id));
++  }, [id, dispatch]);
++
++  const currentStep = order?.orderStatus === 'Cancelled' ? -1 : trackingSteps.indexOf(order?.orderStatus);
++  const isCancellable = ['Order Placed', 'Packed'].includes(order?.orderStatus);
+ 
+-  useEffect(() => { dispatch(fetchOrderById(id)); }, [id, dispatch]);
++  const isCodRefund = useMemo(
++    () => order?.paymentMethod === 'cod' && returnForm.resolutionType === 'refund',
++    [order?.paymentMethod, returnForm.resolutionType]
++  );
+ 
+   if (loading || !order) return <Loader message="Loading order..." />;
+ 
+-  const currentStep = order.orderStatus === 'Cancelled' ? -1 : trackingSteps.indexOf(order.orderStatus);
+-  const isCancellable = ['Order Placed', 'Packed'].includes(order.orderStatus);
++  const handleOpenReturnDialog = (item) => {
++    setSelectedItem(item);
++    setProofImages([]);
++    setReturnForm({
++      reason: 'Damaged',
++      resolutionType: 'refund',
++      comments: '',
++      refundMode: order.paymentMethod === 'cod' ? 'bank_account' : 'original_source',
++      accountHolderName: '',
++      bankName: '',
++      accountNumber: '',
++      ifscCode: '',
++    });
++    setDialogOpen(true);
++  };
++
++  const handleSubmitReturn = async () => {
++    if (!selectedItem) return;
++    const formData = new FormData();
++    formData.append('orderItemId', selectedItem._id);
++    formData.append('reason', returnForm.reason);
++    formData.append('resolutionType', returnForm.resolutionType);
++    formData.append('comments', returnForm.comments);
++    formData.append('refundMode', returnForm.refundMode);
++    if (isCodRefund) {
++      formData.append('accountHolderName', returnForm.accountHolderName);
++      formData.append('bankName', returnForm.bankName);
++      formData.append('accountNumber', returnForm.accountNumber);
++      formData.append('ifscCode', returnForm.ifscCode);
++    }
++    proofImages.forEach((file) => formData.append('images', file));
++
++    const result = await dispatch(createReturnRequest({ orderId: order._id, formData }));
++    if (result.meta.requestStatus === 'fulfilled') {
++      setDialogOpen(false);
++      dispatch(fetchOrderById(order._id));
++      dispatch(fetchMyOrders());
++    }
++  };
+ 
+   return (
+     <Box sx={{ py: 4, bgcolor: '#f8f9fa', minHeight: '100vh' }}>
+       <Container maxWidth="lg">
+-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 4 }}>
++        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 4, flexWrap: 'wrap' }}>
+           <Button startIcon={<ArrowBack />} onClick={() => navigate('/orders')}>Back to Orders</Button>
+-          <Typography variant="h5" fontWeight={800}>
+-            Order #{order._id.slice(-8).toUpperCase()}
+-          </Typography>
+-          <Chip
+-            label={order.orderStatus}
+-            color={order.orderStatus === 'Delivered' ? 'success' : order.orderStatus === 'Cancelled' ? 'error' : 'primary'}
+-          />
++          <Typography variant="h5" fontWeight={800}>Order #{order._id.slice(-8).toUpperCase()}</Typography>
++          <Chip label={order.orderStatus} color={order.orderStatus === 'Delivered' ? 'success' : order.orderStatus === 'Cancelled' ? 'error' : 'primary'} />
+         </Box>
+ 
+         <Grid container spacing={3}>
+-          {/* Tracking */}
+           <Grid item xs={12}>
+             <Card>
+               <CardContent sx={{ p: 4 }}>
+@@ -65,32 +168,86 @@ const OrderTracking = () => {
+             </Card>
+           </Grid>
+ 
+-          {/* Order Items */}
+           <Grid item xs={12} md={7}>
+             <Card>
+               <CardContent>
+-                <Typography variant="h6" fontWeight={700} gutterBottom>Order Items</Typography>
+-                {order.products.map((item, i) => (
+-                  <Box key={i}>
+-                    <Box sx={{ display: 'flex', gap: 2, py: 2, alignItems: 'center' }}>
+-                      <Avatar src={item.image} variant="rounded" sx={{ width: 64, height: 64 }}>📦</Avatar>
+-                      <Box sx={{ flexGrow: 1 }}>
+-                        <Typography fontWeight={700}>{item.name}</Typography>
+-                        <Typography variant="body2" color="text.secondary">Size: {item.size} • Qty: {item.quantity}</Typography>
+-                        <Typography variant="h6" color="primary" fontWeight={700}>{formatPrice(item.price)}</Typography>
++                <Typography variant="h6" fontWeight={700} gutterBottom>Order Items & Returns</Typography>
++                {order.products.map((item, i) => {
++                  const existingReturn = order.returnRequests?.find((request) => request.orderItemId === item._id || request.orderItemId?._id === item._id || request.orderItemId?.toString?.() === item._id);
++                  const flowSteps = getReturnFlowSteps(existingReturn?.resolutionType);
++                  const returnStep = existingReturn ? flowSteps.indexOf(existingReturn.status) : -1;
++
++                  return (
++                    <Box key={item._id || i} sx={{ py: 2 }}>
++                      <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
++                        <Avatar src={item.image} variant="rounded" sx={{ width: 64, height: 64 }}>📦</Avatar>
++                        <Box sx={{ flexGrow: 1 }}>
++                          <Typography fontWeight={700}>{item.name}</Typography>
++                          <Typography variant="body2" color="text.secondary">Size: {item.size} • Qty: {item.quantity}</Typography>
++                          <Typography variant="h6" color="primary" fontWeight={700}>{formatPrice(item.price)}</Typography>
++                        </Box>
++                        <Typography fontWeight={700}>{formatPrice(item.price * item.quantity)}</Typography>
+                       </Box>
+-                      <Typography fontWeight={700}>{formatPrice(item.price * item.quantity)}</Typography>
++
++                      <Stack direction="row" spacing={1} sx={{ mt: 2, flexWrap: 'wrap' }}>
++                        {item.returnMeta?.eligible && (
++                          <Chip color="success" icon={<Autorenew />} label={item.returnMeta.countdownText} />
++                        )}
++                        {item.returnMeta?.deadlineText && !item.returnMeta?.existingReturn && (
++                          <Chip variant="outlined" label={`Return till ${item.returnMeta.deadlineText}`} />
++                        )}
++                        {!item.returnMeta?.eligible && item.returnMeta?.message && (
++                          <Chip variant="outlined" label={item.returnMeta.message} />
++                        )}
++                        {item.returnMeta?.existingReturn && (
++                          <Chip color={statusColors[item.returnMeta.existingReturn.status] || 'default'} label={`Return ${item.returnMeta.existingReturn.status}`} />
++                        )}
++                      </Stack>
++
++                      {item.returnMeta?.eligible && (
++                        <Button variant="outlined" size="small" sx={{ mt: 2 }} onClick={() => handleOpenReturnDialog(item)}>
++                          Return / Replace Item
++                        </Button>
++                      )}
++
++                      {existingReturn && (
++                        <Box sx={{ mt: 3, p: 2, borderRadius: 3, bgcolor: '#fafbff' }}>
++                          <Typography fontWeight={700} gutterBottom>Return Timeline</Typography>
++                          {existingReturn.status === 'Rejected' || existingReturn.status === 'Quality Check Failed' ? (
++                            <Alert severity="error" sx={{ mb: 2 }}>
++                              {existingReturn.status}. {existingReturn.timeline?.[existingReturn.timeline.length - 1]?.note || 'Please contact support for details.'}
++                            </Alert>
++                          ) : (
++                            <Stepper activeStep={returnStep} alternativeLabel sx={{ mb: 2 }}>
++                              {flowSteps.map((step, index) => (
++                                <Step key={step} completed={index <= returnStep}>
++                                  <StepLabel>{step}</StepLabel>
++                                </Step>
++                              ))}
++                            </Stepper>
++                          )}
++                          <List dense>
++                            {(existingReturn.timeline || []).map((entry, entryIndex) => (
++                              <ListItem key={`${entry.status}-${entryIndex}`} sx={{ px: 0 }}>
++                                <ListItemText
++                                  primary={entry.status}
++                                  secondary={`${new Date(entry.timestamp).toLocaleString('en-IN')}${entry.note ? ` • ${entry.note}` : ''}`}
++                                />
++                              </ListItem>
++                            ))}
++                          </List>
++                        </Box>
++                      )}
++
++                      {i < order.products.length - 1 && <Divider sx={{ mt: 2 }} />}
+                     </Box>
+-                    {i < order.products.length - 1 && <Divider />}
+-                  </Box>
+-                ))}
++                  );
++                })}
+               </CardContent>
+             </Card>
+           </Grid>
+ 
+-          {/* Details Sidebar */}
+           <Grid item xs={12} md={5}>
+-            {/* Payment Details */}
+             <Card sx={{ mb: 2 }}>
+               <CardContent>
+                 <Typography variant="h6" fontWeight={700} gutterBottom>💳 Payment Details</Typography>
+@@ -100,8 +257,7 @@ const OrderTracking = () => {
+                 </Box>
+                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                   <Typography color="text.secondary">Status</Typography>
+-                  <Chip label={order.paymentStatus} size="small"
+-                    color={order.paymentStatus === 'paid' ? 'success' : 'warning'} />
++                  <Chip label={order.paymentStatus} size="small" color={order.paymentStatus === 'paid' ? 'success' : 'warning'} />
+                 </Box>
+                 <Divider sx={{ my: 1 }} />
+                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+@@ -126,7 +282,6 @@ const OrderTracking = () => {
+               </CardContent>
+             </Card>
+ 
+-            {/* Shipping Address */}
+             <Card sx={{ mb: 2 }}>
+               <CardContent>
+                 <Typography variant="h6" fontWeight={700} gutterBottom>📍 Delivery Address</Typography>
+@@ -136,25 +291,98 @@ const OrderTracking = () => {
+                   {order.shippingAddress.city}, {order.shippingAddress.state} - {order.shippingAddress.pincode}<br />
+                   {order.shippingAddress.country}
+                 </Typography>
+-                <Typography variant="body2" color="text.secondary" mt={1}>
+-                  📞 {order.shippingAddress.phone}
+-                </Typography>
++                <Typography variant="body2" color="text.secondary" mt={1}>📞 {order.shippingAddress.phone}</Typography>
+               </CardContent>
+             </Card>
+ 
+             {isCancellable && (
+-              <Button
+-                variant="outlined" color="error" fullWidth startIcon={<Cancel />}
+-                onClick={() => dispatch(cancelOrder(order._id))}
+-              >
++              <Button variant="outlined" color="error" fullWidth startIcon={<Cancel />} onClick={() => dispatch(cancelOrder(order._id))}>
+                 Cancel Order
+               </Button>
+             )}
+           </Grid>
+         </Grid>
+       </Container>
++
++      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
++        <DialogTitle>Raise Return Request</DialogTitle>
++        <DialogContent dividers>
++          <Alert severity="info" sx={{ mb: 2 }}>
++            Eligible only for delivered, returnable items within the return window. Proof image is required for damaged or wrong item claims.
++          </Alert>
++          <FormControl fullWidth sx={{ mb: 2 }}>
++            <InputLabel>Return Reason</InputLabel>
++            <Select
++              label="Return Reason"
++              value={returnForm.reason}
++              onChange={(e) => setReturnForm((prev) => ({ ...prev, reason: e.target.value }))}
++            >
++              {['Damaged', 'Wrong item', 'Not satisfied', 'Quality issue', 'Other'].map((reason) => (
++                <MenuItem key={reason} value={reason}>{reason}</MenuItem>
++              ))}
++            </Select>
++          </FormControl>
++          <FormControl fullWidth sx={{ mb: 2 }}>
++            <InputLabel>Resolution Type</InputLabel>
++            <Select
++              label="Resolution Type"
++              value={returnForm.resolutionType}
++              onChange={(e) => setReturnForm((prev) => ({ ...prev, resolutionType: e.target.value }))}
++            >
++              <MenuItem value="refund">Refund</MenuItem>
++              <MenuItem value="replacement">Replacement</MenuItem>
++            </Select>
++          </FormControl>
++          <TextField
++            fullWidth
++            multiline
++            rows={3}
++            label="Comments"
++            value={returnForm.comments}
++            onChange={(e) => setReturnForm((prev) => ({ ...prev, comments: e.target.value }))}
++            sx={{ mb: 2 }}
++          />
++          <Button component="label" variant="outlined" startIcon={<CloudUpload />} sx={{ mb: 2 }}>
++            Upload Proof Images
++            <input hidden multiple accept="image/*" type="file" onChange={(e) => setProofImages(Array.from(e.target.files || []))} />
++          </Button>
++          {proofImages.length > 0 && (
++            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
++              {proofImages.length} image(s) selected
++            </Typography>
++          )}
++
++          {isCodRefund && (
++            <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fafafa' }}>
++              <Typography fontWeight={700} gutterBottom>COD Refund Bank Details</Typography>
++              <Grid container spacing={2}>
++                <Grid item xs={12}>
++                  <TextField fullWidth label="Account Holder Name" value={returnForm.accountHolderName} onChange={(e) => setReturnForm((prev) => ({ ...prev, accountHolderName: e.target.value }))} />
++                </Grid>
++                <Grid item xs={6}>
++                  <TextField fullWidth label="Bank Name" value={returnForm.bankName} onChange={(e) => setReturnForm((prev) => ({ ...prev, bankName: e.target.value }))} />
++                </Grid>
++                <Grid item xs={6}>
++                  <TextField fullWidth label="Account Number" value={returnForm.accountNumber} onChange={(e) => setReturnForm((prev) => ({ ...prev, accountNumber: e.target.value }))} />
++                </Grid>
++                <Grid item xs={12}>
++                  <TextField fullWidth label="IFSC Code" value={returnForm.ifscCode} onChange={(e) => setReturnForm((prev) => ({ ...prev, ifscCode: e.target.value.toUpperCase() }))} />
++                </Grid>
++              </Grid>
++            </Box>
++          )}
++        </DialogContent>
++        <DialogActions>
++          <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
++          <Button onClick={handleSubmitReturn} variant="contained" disabled={returnSubmitting}>
++            {returnSubmitting ? 'Submitting...' : 'Submit Return'}
++          </Button>
++        </DialogActions>
++      </Dialog>
+     </Box>
+   );
+ };
+ 
++const Container = ({ children, ...props }) => <Box component="div" {...props}>{children}</Box>;
++
+ export default OrderTracking;
+diff --git a/frontend/src/redux/adminSlice.js b/frontend/src/redux/adminSlice.js
+index 62e5ee2..2316880 100644
+--- a/frontend/src/redux/adminSlice.js
++++ b/frontend/src/redux/adminSlice.js
+@@ -12,6 +12,27 @@ export const fetchAllOrders = createAsyncThunk('admin/fetchOrders', async (param
+   }
+ });
+ 
++export const fetchReturnRequests = createAsyncThunk('admin/fetchReturns', async (params, { rejectWithValue }) => {
++  try {
++    const query = new URLSearchParams(params).toString();
++    const res = await axiosInstance.get(`/admin/returns?${query}`);
++    return res.data;
++  } catch (err) {
++    return rejectWithValue(err.response?.data?.message);
++  }
++});
++
++export const updateReturnRequestStatus = createAsyncThunk('admin/updateReturnStatus', async ({ id, payload }, { rejectWithValue }) => {
++  try {
++    const res = await axiosInstance.put(`/admin/returns/${id}/status`, payload);
++    toast.success('Return request updated');
++    return res.data.returnRequest;
++  } catch (err) {
++    toast.error(err.response?.data?.message || 'Failed to update return request');
++    return rejectWithValue(err.response?.data?.message);
++  }
++});
++
+ export const fetchAllUsers = createAsyncThunk('admin/fetchUsers', async (params, { rejectWithValue }) => {
+   try {
+     const query = new URLSearchParams(params).toString();
+@@ -95,38 +116,61 @@ const adminSlice = createSlice({
+   name: 'admin',
+   initialState: {
+     orders: [],
++    returnRequests: [],
+     users: [],
+     coupons: [],
+     dashboard: null,
+     analytics: null,
+     total: 0,
+     pages: 1,
++    returnTotal: 0,
++    returnPages: 1,
+     loading: false,
+     error: null,
+   },
+   reducers: {},
+   extraReducers: (builder) => {
+     builder
++      .addCase(fetchAllOrders.pending, (state) => {
++        state.loading = true;
++      })
+       .addCase(fetchAllOrders.fulfilled, (state, action) => {
++        state.loading = false;
+         state.orders = action.payload.orders;
+         state.total = action.payload.total;
+         state.pages = action.payload.pages;
+       })
++      .addCase(fetchReturnRequests.fulfilled, (state, action) => {
++        state.returnRequests = action.payload.returns;
++        state.returnTotal = action.payload.total;
++        state.returnPages = action.payload.pages;
++      })
+       .addCase(fetchAllUsers.fulfilled, (state, action) => {
+         state.users = action.payload.users;
+       })
+       .addCase(updateOrderStatus.fulfilled, (state, action) => {
+-        state.orders = state.orders.map(o => o._id === action.payload._id ? action.payload : o);
++        state.orders = state.orders.map((o) => (o._id === action.payload._id ? action.payload : o));
++      })
++      .addCase(updateReturnRequestStatus.fulfilled, (state, action) => {
++        state.returnRequests = state.returnRequests.map((item) => (item._id === action.payload._id ? action.payload : item));
+       })
+       .addCase(toggleBlockUser.fulfilled, (state, action) => {
+-        state.users = state.users.map(u => u._id === action.payload.id ? { ...u, isBlocked: action.payload.isBlocked } : u);
++        state.users = state.users.map((u) => (u._id === action.payload.id ? { ...u, isBlocked: action.payload.isBlocked } : u));
++      })
++      .addCase(fetchDashboard.fulfilled, (state, action) => {
++        state.dashboard = action.payload;
++      })
++      .addCase(fetchAnalytics.fulfilled, (state, action) => {
++        state.analytics = action.payload;
++      })
++      .addCase(fetchAllCoupons.fulfilled, (state, action) => {
++        state.coupons = action.payload;
++      })
++      .addCase(createCoupon.fulfilled, (state, action) => {
++        state.coupons.unshift(action.payload);
+       })
+-      .addCase(fetchDashboard.fulfilled, (state, action) => { state.dashboard = action.payload; })
+-      .addCase(fetchAnalytics.fulfilled, (state, action) => { state.analytics = action.payload; })
+-      .addCase(fetchAllCoupons.fulfilled, (state, action) => { state.coupons = action.payload; })
+-      .addCase(createCoupon.fulfilled, (state, action) => { state.coupons.unshift(action.payload); })
+       .addCase(deleteCoupon.fulfilled, (state, action) => {
+-        state.coupons = state.coupons.filter(c => c._id !== action.payload);
++        state.coupons = state.coupons.filter((c) => c._id !== action.payload);
+       });
+   },
+ });
+diff --git a/frontend/src/redux/authSlice.js b/frontend/src/redux/authSlice.js
+index 2cea1f7..aadca33 100644
+--- a/frontend/src/redux/authSlice.js
++++ b/frontend/src/redux/authSlice.js
+@@ -2,19 +2,47 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+ import axiosInstance from '../api/axiosInstance';
+ import toast from 'react-hot-toast';
+ 
+-// Register
++const extractErrorPayload = (err, fallbackMessage) => {
++  if (err.response?.data) {
++    return {
++      message: err.response.data.message || fallbackMessage,
++      requiresVerification: err.response.data.requiresVerification || false,
++      email: err.response.data.email || '',
++    };
++  }
++
++  return { message: fallbackMessage, requiresVerification: false, email: '' };
++};
++
+ export const registerUser = createAsyncThunk('auth/register', async (data, { rejectWithValue }) => {
+   try {
+     const res = await axiosInstance.post('/auth/register', data);
++    return res.data;
++  } catch (err) {
++    return rejectWithValue(extractErrorPayload(err, 'Registration failed'));
++  }
++});
++
++export const verifyEmailOtp = createAsyncThunk('auth/verifyEmailOtp', async (data, { rejectWithValue }) => {
++  try {
++    const res = await axiosInstance.post('/auth/verify-email-otp', data);
+     localStorage.setItem('dormezToken', res.data.token);
+     localStorage.setItem('dormezUser', JSON.stringify(res.data.user));
+     return res.data;
+   } catch (err) {
+-    return rejectWithValue(err.response?.data?.message || 'Registration failed');
++    return rejectWithValue(extractErrorPayload(err, 'OTP verification failed'));
++  }
++});
++
++export const resendEmailOtp = createAsyncThunk('auth/resendEmailOtp', async (data, { rejectWithValue }) => {
++  try {
++    const res = await axiosInstance.post('/auth/resend-email-otp', data);
++    return res.data;
++  } catch (err) {
++    return rejectWithValue(extractErrorPayload(err, 'Failed to resend OTP'));
+   }
+ });
+ 
+-// Login
+ export const loginUser = createAsyncThunk('auth/login', async (data, { rejectWithValue }) => {
+   try {
+     const res = await axiosInstance.post('/auth/login', data);
+@@ -22,28 +50,26 @@ export const loginUser = createAsyncThunk('auth/login', async (data, { rejectWit
+     localStorage.setItem('dormezUser', JSON.stringify(res.data.user));
+     return res.data;
+   } catch (err) {
+-    return rejectWithValue(err.response?.data?.message || 'Login failed');
++    return rejectWithValue(extractErrorPayload(err, 'Login failed'));
+   }
+ });
+ 
+-// Get me
+ export const getMe = createAsyncThunk('auth/getMe', async (_, { rejectWithValue }) => {
+   try {
+     const res = await axiosInstance.get('/auth/me');
+     return res.data;
+   } catch (err) {
+-    return rejectWithValue(err.response?.data?.message || 'Failed to get user');
++    return rejectWithValue(extractErrorPayload(err, 'Failed to get user'));
+   }
+ });
+ 
+-// Update profile
+ export const updateProfile = createAsyncThunk('auth/updateProfile', async (data, { rejectWithValue }) => {
+   try {
+     const res = await axiosInstance.put('/users/profile', data);
+     localStorage.setItem('dormezUser', JSON.stringify(res.data.user));
+     return res.data;
+   } catch (err) {
+-    return rejectWithValue(err.response?.data?.message || 'Update failed');
++    return rejectWithValue(extractErrorPayload(err, 'Update failed'));
+   }
+ });
+ 
+@@ -54,34 +80,88 @@ const authSlice = createSlice({
+   initialState: {
+     user: initialUser,
+     token: localStorage.getItem('dormezToken') || null,
++    pendingVerification: null,
+     loading: false,
++    verifyingOtp: false,
++    resendLoading: false,
+     error: null,
+   },
+   reducers: {
+     logout: (state) => {
+       state.user = null;
+       state.token = null;
++      state.pendingVerification = null;
+       localStorage.removeItem('dormezToken');
+       localStorage.removeItem('dormezUser');
+       toast.success('Logged out successfully');
+     },
+-    clearError: (state) => { state.error = null; },
++    clearError: (state) => {
++      state.error = null;
++    },
++    clearPendingVerification: (state) => {
++      state.pendingVerification = null;
++    },
++    setPendingVerification: (state, action) => {
++      state.pendingVerification = action.payload;
++    },
+   },
+   extraReducers: (builder) => {
+     builder
+-      .addCase(registerUser.pending, (state) => { state.loading = true; state.error = null; })
++      .addCase(registerUser.pending, (state) => {
++        state.loading = true;
++        state.error = null;
++      })
+       .addCase(registerUser.fulfilled, (state, action) => {
+         state.loading = false;
+-        state.user = action.payload.user;
+-        state.token = action.payload.token;
+-        toast.success('Registration successful! 🎉');
++        state.pendingVerification = {
++          email: action.payload.email,
++          expiresAt: action.payload.otp?.expiresAt,
++          resendAvailableAt: action.payload.otp?.resendAvailableAt,
++        };
++        toast.success('OTP sent to your email. Please verify to activate your account.');
+       })
+       .addCase(registerUser.rejected, (state, action) => {
+         state.loading = false;
+-        state.error = action.payload;
+-        toast.error(action.payload);
++        state.error = action.payload?.message || 'Registration failed';
++        toast.error(state.error);
++      })
++      .addCase(verifyEmailOtp.pending, (state) => {
++        state.verifyingOtp = true;
++        state.error = null;
++      })
++      .addCase(verifyEmailOtp.fulfilled, (state, action) => {
++        state.verifyingOtp = false;
++        state.user = action.payload.user;
++        state.token = action.payload.token;
++        state.pendingVerification = null;
++        toast.success('Email verified successfully! Welcome to Dormez 🎉');
++      })
++      .addCase(verifyEmailOtp.rejected, (state, action) => {
++        state.verifyingOtp = false;
++        state.error = action.payload?.message || 'OTP verification failed';
++        toast.error(state.error);
++      })
++      .addCase(resendEmailOtp.pending, (state) => {
++        state.resendLoading = true;
++      })
++      .addCase(resendEmailOtp.fulfilled, (state, action) => {
++        state.resendLoading = false;
++        state.pendingVerification = {
++          email: action.payload.email,
++          expiresAt: action.payload.otp?.expiresAt,
++          resendAvailableAt: action.payload.otp?.resendAvailableAt,
++        };
++        toast.success('A fresh OTP has been sent to your email.');
++      })
++      .addCase(resendEmailOtp.rejected, (state, action) => {
++        state.resendLoading = false;
++        state.error = action.payload?.message || 'Failed to resend OTP';
++        toast.error(state.error);
++      })
++      .addCase(loginUser.pending, (state) => {
++        state.loading = true;
++        state.error = null;
+       })
+-      .addCase(loginUser.pending, (state) => { state.loading = true; state.error = null; })
+       .addCase(loginUser.fulfilled, (state, action) => {
+         state.loading = false;
+         state.user = action.payload.user;
+@@ -90,8 +170,10 @@ const authSlice = createSlice({
+       })
+       .addCase(loginUser.rejected, (state, action) => {
+         state.loading = false;
+-        state.error = action.payload;
+-        toast.error(action.payload);
++        state.error = action.payload?.message || 'Login failed';
++        if (!action.payload?.requiresVerification) {
++          toast.error(state.error);
++        }
+       })
+       .addCase(getMe.fulfilled, (state, action) => {
+         state.user = action.payload.user;
+@@ -103,5 +185,5 @@ const authSlice = createSlice({
+   },
+ });
+ 
+-export const { logout, clearError } = authSlice.actions;
++export const { logout, clearError, clearPendingVerification, setPendingVerification } = authSlice.actions;
+ export default authSlice.reducer;
+diff --git a/frontend/src/redux/orderSlice.js b/frontend/src/redux/orderSlice.js
+index 9b51996..524ba5f 100644
+--- a/frontend/src/redux/orderSlice.js
++++ b/frontend/src/redux/orderSlice.js
+@@ -42,29 +42,81 @@ export const cancelOrder = createAsyncThunk('orders/cancel', async (id, { reject
+   }
+ });
+ 
++export const createReturnRequest = createAsyncThunk('orders/createReturn', async ({ orderId, formData }, { rejectWithValue }) => {
++  try {
++    const res = await axiosInstance.post(`/orders/${orderId}/returns`, formData, {
++      headers: { 'Content-Type': 'multipart/form-data' },
++    });
++    toast.success('Return request submitted successfully');
++    return res.data.returnRequest;
++  } catch (err) {
++    toast.error(err.response?.data?.message || 'Return request failed');
++    return rejectWithValue(err.response?.data?.message);
++  }
++});
++
+ const orderSlice = createSlice({
+   name: 'orders',
+   initialState: {
+     orders: [],
+     selectedOrder: null,
+     loading: false,
++    returnSubmitting: false,
+     error: null,
+   },
+   reducers: {
+-    clearSelectedOrder: (state) => { state.selectedOrder = null; },
++    clearSelectedOrder: (state) => {
++      state.selectedOrder = null;
++    },
+   },
+   extraReducers: (builder) => {
+     builder
+-      .addCase(createOrder.pending, (state) => { state.loading = true; })
+-      .addCase(createOrder.fulfilled, (state, action) => { state.loading = false; state.selectedOrder = action.payload; })
+-      .addCase(createOrder.rejected, (state, action) => { state.loading = false; state.error = action.payload; })
+-      .addCase(fetchMyOrders.pending, (state) => { state.loading = true; })
+-      .addCase(fetchMyOrders.fulfilled, (state, action) => { state.loading = false; state.orders = action.payload; })
+-      .addCase(fetchMyOrders.rejected, (state, action) => { state.loading = false; state.error = action.payload; })
+-      .addCase(fetchOrderById.fulfilled, (state, action) => { state.selectedOrder = action.payload; })
++      .addCase(createOrder.pending, (state) => {
++        state.loading = true;
++      })
++      .addCase(createOrder.fulfilled, (state, action) => {
++        state.loading = false;
++        state.selectedOrder = action.payload;
++      })
++      .addCase(createOrder.rejected, (state, action) => {
++        state.loading = false;
++        state.error = action.payload;
++      })
++      .addCase(fetchMyOrders.pending, (state) => {
++        state.loading = true;
++      })
++      .addCase(fetchMyOrders.fulfilled, (state, action) => {
++        state.loading = false;
++        state.orders = action.payload;
++      })
++      .addCase(fetchMyOrders.rejected, (state, action) => {
++        state.loading = false;
++        state.error = action.payload;
++      })
++      .addCase(fetchOrderById.pending, (state) => {
++        state.loading = true;
++      })
++      .addCase(fetchOrderById.fulfilled, (state, action) => {
++        state.loading = false;
++        state.selectedOrder = action.payload;
++      })
++      .addCase(fetchOrderById.rejected, (state, action) => {
++        state.loading = false;
++        state.error = action.payload;
++      })
+       .addCase(cancelOrder.fulfilled, (state, action) => {
+-        state.orders = state.orders.map(o => o._id === action.payload._id ? action.payload : o);
++        state.orders = state.orders.map((o) => (o._id === action.payload._id ? action.payload : o));
+         state.selectedOrder = action.payload;
++      })
++      .addCase(createReturnRequest.pending, (state) => {
++        state.returnSubmitting = true;
++      })
++      .addCase(createReturnRequest.fulfilled, (state) => {
++        state.returnSubmitting = false;
++      })
++      .addCase(createReturnRequest.rejected, (state, action) => {
++        state.returnSubmitting = false;
++        state.error = action.payload;
+       });
+   },
+ });
