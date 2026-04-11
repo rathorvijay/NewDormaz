@@ -89,3 +89,23 @@
 2026-04-12 00:14:27 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
 2026-04-12 00:15:11 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
 2026-04-12 00:17:33 [INFO]: Email sent: <ebf96dc6-ad98-6525-35af-b078b860d782@gmail.com> to rathorvijay731@gmail.com
+2026-04-12 00:26:21 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-12 00:26:35 [ERROR]: Not authorized, invalid token - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-12 00:26:35 [ERROR]: Not authorized, invalid token - /api/admin/returns?page=1&limit=10 - GET - ::1
+2026-04-12 00:26:36 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-02.4vethwx.mongodb.net
+2026-04-12 00:27:11 [INFO]: Email sent: <01029239-3675-2d19-a394-4dbfa571b7a1@gmail.com> to rathorvijay731@gmail.com
+2026-04-12 00:33:04 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-12 00:33:06 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-00.4vethwx.mongodb.net
+2026-04-12 00:34:19 [INFO]: Email sent: <e4d8d23a-fe5e-a6da-d0ac-257fa39da744@gmail.com> to rathorvijay731@gmail.com
+2026-04-12 00:34:30 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-12 00:34:30 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-12 00:34:33 [ERROR]: Access denied. Admin only. - /api/admin/returns?page=1&limit=10 - GET - ::1
+2026-04-12 00:34:33 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-12 00:34:33 [ERROR]: Access denied. Admin only. - /api/admin/returns?page=1&limit=10 - GET - ::1
+2026-04-12 00:34:33 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-12 00:35:26 [INFO]: Email sent: <3b63f941-fead-3971-0c9b-64103863d2a1@gmail.com> to rathorvijay731@gmail.com
+2026-04-12 00:36:38 [INFO]: 🚀 Dormez Server running on port 5000 in development mode
+2026-04-12 00:36:40 [INFO]: ✅ MongoDB Connected: ac-o2mnhk5-shard-00-00.4vethwx.mongodb.net
+2026-04-12 00:37:23 [INFO]: Email sent: <1d7b87cf-d5c5-216e-7fdf-ec9c75c39b6b@gmail.com> to rathorvijay731@gmail.com
+2026-04-12 00:38:43 [INFO]: Email sent: <0b87c6be-36bf-c2cb-4a88-9db96fb9f2d9@gmail.com> to rathorvijay731@gmail.com
+2026-04-12 00:38:59 [INFO]: Email sent: <ddcafc39-6bca-18f1-e255-74d104adc09b@gmail.com> to rathorvijay731@gmail.com

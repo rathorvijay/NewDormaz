@@ -23,3 +23,11 @@
 2026-04-12 00:14:13 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
 2026-04-12 00:14:27 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
 2026-04-12 00:15:11 [ERROR]: Invalid email or password - /api/auth/login - POST - ::1
+2026-04-12 00:26:35 [ERROR]: Not authorized, invalid token - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-12 00:26:35 [ERROR]: Not authorized, invalid token - /api/admin/returns?page=1&limit=10 - GET - ::1
+2026-04-12 00:34:30 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-12 00:34:30 [ERROR]: Access denied. Admin only. - /api/admin/dashboard - GET - ::1
+2026-04-12 00:34:33 [ERROR]: Access denied. Admin only. - /api/admin/returns?page=1&limit=10 - GET - ::1
+2026-04-12 00:34:33 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
+2026-04-12 00:34:33 [ERROR]: Access denied. Admin only. - /api/admin/returns?page=1&limit=10 - GET - ::1
+2026-04-12 00:34:33 [ERROR]: Access denied. Admin only. - /api/orders?page=1&limit=10 - GET - ::1
