@@ -50,7 +50,7 @@ function App() {
           <AppRoutes />
         </Router>
         <Toaster
-          position="top-right"
+          position="top-center"
           toastOptions={{
             duration: 3000,
             style: { fontFamily: "'Poppins', sans-serif", fontSize: '14px' },
